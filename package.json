@@ -1,0 +1,25 @@
+{
+  "name": "obsidian-neuro-roadmap",
+  "version": "0.1.0",
+  "description": "Neuro-adaptive roadmap planning for Obsidian.",
+  "main": "main.js",
+  "scripts": {
+    "build": "node esbuild.config.mjs production",
+    "dev": "node esbuild.config.mjs",
+    "check": "tsc --noEmit"
+  },
+  "keywords": [
+    "obsidian",
+    "plugin",
+    "roadmap"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "esbuild": "^0.25.10",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "obsidian": "file:../obsidian-api",
+    "zod": "^3.25.76"
+  }
+}

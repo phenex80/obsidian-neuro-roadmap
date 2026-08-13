@@ -1,0 +1,75 @@
+import { z } from 'zod';
+
+export const NODE_TYPES = ['project', 'milestone', 'task'] as const;
+export const ENERGY_LEVELS = ['low', 'medium', 'high'] as const;
+export const NODE_STATUSES = ['todo', 'in-progress', 'done', 'unscheduled'] as const;
+
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+export const dateStringSchema = z
+  .string()
+  .regex(DATE_PATTERN, 'Expected date in YYYY-MM-DD format')
+  .refine((value) => !Number.isNaN(Date.parse(`${value}T00:00:00Z`)), {
+    message: 'Expected a valid calendar date',
+  });
+
+export const wikilinkSchema = z
+  .string()
+  .trim()
+  .regex(/^\[\[[^\]]+\]\]$/, 'Expected an Obsidian wikilink');
+
+export const roadmapNodeFrontmatterSchema = z.object({
+  title: z.string().trim().min(1).optional(),
+  type: z.enum(NODE_TYPES).default('task'),
+  semester: z.string().trim().min(1).optional(),
+  subject: wikilinkSchema.optional(),
+  start_date: dateStringSchema.optional(),
+  due_date: dateStringSchema.optional(),
+  duration_buffer: z.number().finite().positive().default(1.3),
+  energy_level: z.enum(ENERGY_LEVELS).default('medium'),
+  status: z.enum(NODE_STATUSES).default('todo'),
+  parent: wikilinkSchema.optional(),
+  depends_on: z.array(wikilinkSchema).default([]),
+  hard_dependency: z.boolean().default(false),
+});
+
+export const inlineTaskSchema = z.object({
+  text: z.string().trim().min(1),
+  completed: z.boolean(),
+  subject: wikilinkSchema.optional(),
+  start: dateStringSchema.optional(),
+  due: dateStringSchema.optional(),
+  energy: z.enum(ENERGY_LEVELS).default('medium'),
+  blockId: z.string().trim().min(1).optional(),
+});
+
+export const roadmapSettingsSchema = z.object({
+  defaultDurationBuffer: z.number().finite().positive().default(1.3),
+  defaultEnergyLevel: z.enum(ENERGY_LEVELS).default('medium'),
+});
+
+export type NodeType = z.infer<typeof roadmapNodeFrontmatterSchema>['type'];
+export type EnergyLevel = z.infer<typeof roadmapNodeFrontmatterSchema>['energy_level'];
+export type NodeStatus = z.infer<typeof roadmapNodeFrontmatterSchema>['status'];
+export type RoadmapNodeFrontmatter = z.infer<typeof roadmapNodeFrontmatterSchema>;
+export type InlineTask = z.infer<typeof inlineTaskSchema>;
+export type RoadmapSettings = z.infer<typeof roadmapSettingsSchema>;
+
+export interface RoadmapNode {
+  id: string;
+  path: string;
+  title: string;
+  type: NodeType;
+  semester?: string;
+  subject?: string;
+  startDate?: string;
+  dueDate?: string;
+  durationBuffer: number;
+  energyLevel: EnergyLevel;
+  status: NodeStatus;
+  parent?: string;
+  dependsOn: readonly string[];
+  hardDependency: boolean;
+  source: 'frontmatter' | 'inline';
+  blockId?: string;
+}

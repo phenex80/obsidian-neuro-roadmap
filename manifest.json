@@ -1,0 +1,9 @@
+{
+  "id": "obsidian-neuro-roadmap",
+  "name": "Neuro-Adaptive Roadmap",
+  "version": "0.1.0",
+  "minAppVersion": "1.8.0",
+  "description": "Interactive neuro-adaptive roadmap planning backed by Markdown notes.",
+  "author": "Matteo",
+  "isDesktopOnly": false
+}
