@@ -286,7 +286,7 @@
               width={timelineNode.width}
               height="29"
               rx="5"
-              class={`timeline-node energy-${timelineNode.node.energyLevel}`}
+              class={`timeline-node ${timelineNode.node.hardDependency ? 'hard-dependency' : 'soft-dependency'} energy-${timelineNode.node.energyLevel}`}
               role="button"
               tabindex="0"
               aria-label={`Reschedule or edit ${timelineNode.node.title}`}
@@ -366,6 +366,15 @@
   .timeline-node.energy-high {
     fill: var(--color-orange);
     opacity: 1;
+  }
+
+  .timeline-node.hard-dependency {
+    stroke: var(--interactive-accent);
+    stroke-width: 2;
+  }
+
+  .timeline-node.soft-dependency {
+    stroke-dasharray: 4 2;
   }
 
   .node-text {

@@ -17,6 +17,7 @@
   }: { app: App; indexer: RoadmapIndexer; scheduler: RoadmapScheduler } = $props();
   let nodes = $state<readonly RoadmapNode[]>([]);
   let semester = $state('all');
+  let selectedSubjects = $state<string[]>([]);
   let energyLevel = $state<'all' | 'low' | 'medium' | 'high'>('all');
   let viewMode = $state<'gantt' | 'horizon'>('gantt');
   let focusMode = $state(false);
@@ -33,10 +34,21 @@
       ),
     ).sort(),
   );
+  let subjects = $derived(
+    Array.from(
+      new Set(
+        nodes
+          .map((node) => node.subject)
+          .filter((value): value is string => value !== undefined),
+      ),
+    ).sort(),
+  );
   let filteredNodes = $derived(
     nodes.filter(
       (node) =>
         (semester === 'all' || node.semester === semester) &&
+        (selectedSubjects.length === 0 ||
+          (node.subject !== undefined && selectedSubjects.includes(node.subject))) &&
         (energyLevel === 'all' || node.energyLevel === energyLevel),
     ),
   );
@@ -61,6 +73,11 @@
     scratchpadNode = node;
   }
 
+  function formatSubject(subjectPath: string): string {
+    const filename = subjectPath.split('/').at(-1) ?? subjectPath;
+    return filename.endsWith('.md') ? filename.slice(0, -3) : filename;
+  }
+
   async function appendScratchpad(text: string): Promise<void> {
     if (scratchpadNode !== null) {
       await scheduler.appendScratchpad(scratchpadNode, text);
@@ -76,6 +93,15 @@
         <option value="all">All semesters</option>
         {#each semesters as availableSemester (availableSemester)}
           <option value={availableSemester}>{availableSemester}</option>
+        {/each}
+      </select>
+    </label>
+
+    <label>
+      <span>Subjects</span>
+      <select bind:value={selectedSubjects} multiple aria-label="Subject filter">
+        {#each subjects as subjectPath (subjectPath)}
+          <option value={subjectPath}>{formatSubject(subjectPath)}</option>
         {/each}
       </select>
     </label>
@@ -185,6 +211,10 @@
 
   select {
     padding: var(--size-2-2) var(--size-4-2);
+  }
+
+  select[multiple] {
+    min-height: var(--size-4-6);
   }
 
   button {

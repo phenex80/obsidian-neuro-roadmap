@@ -23,7 +23,7 @@ export class RoadmapIndexer {
 
   /** Performs the one-time cache-backed initial index before a view consumes the graph. */
   async initialize(): Promise<void> {
-    const files = this.getMetadataCachedMarkdownFiles();
+    const files = this.app.vault.getMarkdownFiles();
     await Promise.all(files.map(async (file) => this.reindexFile(file, false)));
     this.emitChange();
   }
@@ -136,17 +136,6 @@ export class RoadmapIndexer {
     this.incrementRevision(file.path);
     this.replaceFileNodes(file.path, this.parser.parseFile(file, cache, source));
     this.emitChange();
-  }
-
-  private getMetadataCachedMarkdownFiles(): TFile[] {
-    const cachedPaths = new Set([
-      ...Object.keys(this.app.metadataCache.resolvedLinks),
-      ...Object.keys(this.app.metadataCache.unresolvedLinks),
-    ]);
-
-    return Array.from(cachedPaths)
-      .map((path) => this.app.vault.getAbstractFileByPath(path))
-      .filter((file): file is TFile => file instanceof TFile);
   }
 
   private async reindexFile(file: TFile, emitChange: boolean): Promise<void> {
