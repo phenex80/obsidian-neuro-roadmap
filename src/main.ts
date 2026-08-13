@@ -6,6 +6,7 @@ import {
   type RoadmapSettings,
 } from './types';
 import { RoadmapIndexer } from './core/Indexer';
+import { GlobalItemView, VIEW_TYPE_NEURO_ROADMAP } from './ui/views/GlobalItemView';
 
 const DEFAULT_SETTINGS: RoadmapSettings = roadmapSettingsSchema.parse({});
 
@@ -17,6 +18,17 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     await this.loadSettings();
     await this.indexer.initialize();
     this.indexer.registerEvents((eventRef) => this.registerEvent(eventRef));
+    this.registerView(VIEW_TYPE_NEURO_ROADMAP, (leaf) => new GlobalItemView(leaf, this));
+    this.addRibbonIcon('git-branch', 'Open Neuro-Adaptive Roadmap', () => {
+      void this.activateRoadmapView();
+    });
+    this.addCommand({
+      id: 'open-neuro-adaptive-roadmap',
+      name: 'Open Neuro-Adaptive Roadmap',
+      callback: () => {
+        void this.activateRoadmapView();
+      },
+    });
     this.addSettingTab(new NeuroAdaptiveRoadmapSettingTab(this.app, this));
   }
 
@@ -33,6 +45,13 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
   async saveSettings(): Promise<void> {
     this.settings = roadmapSettingsSchema.parse(this.settings);
     await this.saveData(this.settings);
+  }
+
+  private async activateRoadmapView(): Promise<void> {
+    const existingLeaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_NEURO_ROADMAP)[0];
+    const leaf = existingLeaf ?? this.app.workspace.getLeaf('tab');
+    await leaf.setViewState({ type: VIEW_TYPE_NEURO_ROADMAP, active: true });
+    await this.app.workspace.revealLeaf(leaf);
   }
 }
 

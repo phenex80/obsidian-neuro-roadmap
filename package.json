@@ -6,7 +6,7 @@
   "scripts": {
     "build": "node esbuild.config.mjs production",
     "dev": "node esbuild.config.mjs",
-    "check": "tsc --noEmit"
+    "check": "svelte-check --tsconfig ./tsconfig.json && tsc --noEmit"
   },
   "keywords": [
     "obsidian",
@@ -16,6 +16,8 @@
   "license": "MIT",
   "devDependencies": {
     "esbuild": "^0.25.10",
+    "svelte": "^5.56.9",
+    "svelte-check": "^4.7.6",
     "typescript": "^5.9.3"
   },
   "dependencies": {

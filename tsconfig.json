@@ -7,6 +7,7 @@
     "target": "ES2022",
     "allowJs": false,
     "moduleResolution": "Node",
+    "allowArbitraryExtensions": true,
     "importHelpers": true,
     "isolatedModules": true,
     "strict": true,
@@ -20,7 +21,8 @@
     "outDir": "dist"
   },
   "include": [
-    "src/**/*.ts"
+    "src/**/*.ts",
+    "src/**/*.svelte"
   ],
   "exclude": [
     "node_modules",
