@@ -6,10 +6,24 @@ export const NODE_STATUSES = ['todo', 'in-progress', 'done', 'unscheduled'] as c
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
+function isCalendarDate(value: string): boolean {
+  const [yearValue, monthValue, dayValue] = value.split('-');
+  const year = Number(yearValue);
+  const month = Number(monthValue);
+  const day = Number(dayValue);
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
 export const dateStringSchema = z
   .string()
   .regex(DATE_PATTERN, 'Expected date in YYYY-MM-DD format')
-  .refine((value) => !Number.isNaN(Date.parse(`${value}T00:00:00Z`)), {
+  .refine(isCalendarDate, {
     message: 'Expected a valid calendar date',
   });
 

@@ -5,15 +5,23 @@ import {
   roadmapSettingsSchema,
   type RoadmapSettings,
 } from './types';
+import { RoadmapIndexer } from './core/Indexer';
 
 const DEFAULT_SETTINGS: RoadmapSettings = roadmapSettingsSchema.parse({});
 
 export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
   settings: RoadmapSettings = DEFAULT_SETTINGS;
+  readonly indexer = new RoadmapIndexer(this.app);
 
   async onload(): Promise<void> {
     await this.loadSettings();
+    await this.indexer.initialize();
+    this.indexer.registerEvents((eventRef) => this.registerEvent(eventRef));
     this.addSettingTab(new NeuroAdaptiveRoadmapSettingTab(this.app, this));
+  }
+
+  onunload(): void {
+    this.indexer.clear();
   }
 
   async loadSettings(): Promise<void> {
