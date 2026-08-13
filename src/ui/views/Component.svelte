@@ -1,17 +1,25 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import type { App } from 'obsidian';
   import type { RoadmapNode } from '../../types';
   import type { RoadmapIndexer } from '../../core/Indexer';
+  import type { RoadmapScheduler } from '../../core/RoadmapScheduler';
   import GanttCanvas from '../components/GanttCanvas.svelte';
   import HorizonBoard from '../components/HorizonBoard.svelte';
   import UnscheduledDrawer from '../components/UnscheduledDrawer.svelte';
+  import ScratchpadPopover from '../components/ScratchpadPopover.svelte';
 
-  let { indexer }: { indexer: RoadmapIndexer } = $props();
+  let {
+    app,
+    indexer,
+    scheduler,
+  }: { app: App; indexer: RoadmapIndexer; scheduler: RoadmapScheduler } = $props();
   let nodes = $state<readonly RoadmapNode[]>([]);
   let semester = $state('all');
   let energyLevel = $state<'all' | 'low' | 'medium' | 'high'>('all');
   let viewMode = $state<'gantt' | 'horizon'>('gantt');
   let focusMode = $state(false);
+  let scratchpadNode = $state<RoadmapNode | null>(null);
   const ENERGY_FILTERS = ['all', 'low', 'medium', 'high'] as const;
 
   let semesters = $derived(
@@ -40,6 +48,16 @@
 
   function isInactive(path: string): boolean {
     return activePaths !== null && !activePaths.has(path);
+  }
+
+  function openScratchpad(node: RoadmapNode): void {
+    scratchpadNode = node;
+  }
+
+  async function appendScratchpad(text: string): Promise<void> {
+    if (scratchpadNode !== null) {
+      await scheduler.appendScratchpad(scratchpadNode, text);
+    }
   }
 </script>
 
@@ -93,14 +111,30 @@
   <div class="roadmap-layout">
     <div class="main-panel">
       {#if viewMode === 'gantt'}
-        <GanttCanvas nodes={filteredNodes} {isInactive} />
+        <GanttCanvas
+          nodes={filteredNodes}
+          {isInactive}
+          onReschedule={(node, startDate, dueDate) => scheduler.rescheduleNode(node, startDate, dueDate)}
+          onSchedule={(node, startDate, dueDate) => scheduler.scheduleUnscheduledNode(node, startDate, dueDate)}
+          onCreate={(startDate, dueDate) => scheduler.createNode(startDate, dueDate)}
+          onEdit={openScratchpad}
+        />
       {:else}
-        <HorizonBoard nodes={filteredNodes} {isInactive} />
+        <HorizonBoard nodes={filteredNodes} {isInactive} onEdit={openScratchpad} />
       {/if}
     </div>
-    <UnscheduledDrawer nodes={filteredNodes} {isInactive} />
+    <UnscheduledDrawer nodes={filteredNodes} {isInactive} onEdit={openScratchpad} />
   </div>
 </main>
+
+{#if scratchpadNode !== null}
+  <ScratchpadPopover
+    {app}
+    node={scratchpadNode}
+    onSave={appendScratchpad}
+    onClose={() => (scratchpadNode = null)}
+  />
+{/if}
 
 <style>
   .roadmap-workspace {

@@ -7,7 +7,12 @@
   let {
     nodes,
     isInactive,
-  }: { nodes: readonly RoadmapNode[]; isInactive: (path: string) => boolean } = $props();
+    onEdit,
+  }: {
+    nodes: readonly RoadmapNode[];
+    isInactive: (path: string) => boolean;
+    onEdit: (node: RoadmapNode) => void;
+  } = $props();
 
   let columns = $derived({
     now: getNowNodes(nodes),
@@ -61,6 +66,7 @@
             <article
               class={`roadmap-card energy-${node.energyLevel}`}
               class:inactive={isInactive(node.path)}
+              ondblclick={() => onEdit(node)}
             >
               <h4>{node.title}</h4>
               <p>{node.dueDate === undefined ? 'Unscheduled' : `Due ${node.dueDate}`}</p>

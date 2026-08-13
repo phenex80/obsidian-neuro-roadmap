@@ -31,7 +31,9 @@ export class GlobalItemView extends ItemView {
     this.component = mount(Component, {
       target: this.contentEl,
       props: {
+        app: this.app,
         indexer: this.plugin.indexer,
+        scheduler: this.plugin.scheduler,
       },
     });
   }

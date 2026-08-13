@@ -5,7 +5,12 @@
   let {
     nodes,
     isInactive,
-  }: { nodes: readonly RoadmapNode[]; isInactive: (path: string) => boolean } = $props();
+    onEdit,
+  }: {
+    nodes: readonly RoadmapNode[];
+    isInactive: (path: string) => boolean;
+    onEdit: (node: RoadmapNode) => void;
+  } = $props();
   let unscheduledNodes = $derived(nodes.filter((node) => !hasValidDates(node)));
 
   function hasValidDates(node: RoadmapNode): boolean {
@@ -14,6 +19,14 @@
       node.dueDate !== undefined &&
       calculateCalendarDaySpan(node.startDate, node.dueDate) !== null
     );
+  }
+
+  function onDragStart(event: DragEvent, node: RoadmapNode): void {
+    const transfer = event.dataTransfer;
+    if (transfer !== null) {
+      transfer.setData('application/x-neuro-roadmap-node', node.id);
+      transfer.effectAllowed = 'move';
+    }
   }
 </script>
 
@@ -27,7 +40,12 @@
   {:else}
     <ul>
       {#each unscheduledNodes as node (node.id)}
-        <li class:inactive={isInactive(node.path)}>
+        <li
+          class:inactive={isInactive(node.path)}
+          draggable="true"
+          ondragstart={(event) => onDragStart(event, node)}
+          ondblclick={() => onEdit(node)}
+        >
           <span class={`energy-indicator energy-${node.energyLevel}`}></span>
           <div>
             <strong>{node.title}</strong>

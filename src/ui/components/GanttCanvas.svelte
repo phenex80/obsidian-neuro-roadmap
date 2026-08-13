@@ -1,11 +1,22 @@
 <script lang="ts">
-  import { calculateBufferedDuration } from '../../core/BufferCalculator';
+  import { calculateBufferedDuration, calculateCalendarDaySpan } from '../../core/BufferCalculator';
   import type { RoadmapNode } from '../../types';
 
   let {
     nodes,
     isInactive,
-  }: { nodes: readonly RoadmapNode[]; isInactive: (path: string) => boolean } = $props();
+    onReschedule,
+    onSchedule,
+    onCreate,
+    onEdit,
+  }: {
+    nodes: readonly RoadmapNode[];
+    isInactive: (path: string) => boolean;
+    onReschedule: (node: RoadmapNode, startDate: string, dueDate: string) => Promise<void>;
+    onSchedule: (node: RoadmapNode, startDate: string, dueDate: string) => Promise<void>;
+    onCreate: (startDate: string, dueDate: string) => Promise<void>;
+    onEdit: (node: RoadmapNode) => void;
+  } = $props();
 
   const DAY_WIDTH = 36;
   const ROW_HEIGHT = 46;
@@ -17,26 +28,29 @@
       .filter(isScheduled)
       .sort((left, right) => left.startDate.localeCompare(right.startDate)),
   );
-  let timelineStart = $derived(scheduledNodes[0]?.startDate ?? null);
-  let timelineEnd = $derived(calculateTimelineEnd(scheduledNodes));
+  let timelineStart = $derived(scheduledNodes[0]?.startDate ?? today());
+  let timelineEnd = $derived(calculateTimelineEnd(scheduledNodes) ?? addDays(timelineStart, 13));
   let dayCount = $derived(
-    timelineStart === null || timelineEnd === null ? 0 : daysBetween(timelineStart, timelineEnd) + 1,
+    daysBetween(timelineStart, timelineEnd) + 1,
   );
   let dayLabels = $derived(
-    timelineStart === null ? [] : Array.from({ length: dayCount }, (_, index) => addDays(timelineStart, index)),
+    Array.from({ length: dayCount }, (_, index) => addDays(timelineStart, index)),
   );
   let timelineNodes = $derived(
-    timelineStart === null
-      ? []
-      : scheduledNodes.map((node, index) => ({
-          node,
-          x: LABEL_WIDTH + daysBetween(timelineStart, node.startDate) * DAY_WIDTH,
-          y: HEADER_HEIGHT + index * ROW_HEIGHT + 8,
-          width: calculateNodeWidth(node),
-        })),
+    scheduledNodes.map((node, index) => ({
+      node,
+      x: LABEL_WIDTH + daysBetween(timelineStart, node.startDate) * DAY_WIDTH,
+      y: HEADER_HEIGHT + index * ROW_HEIGHT + 8,
+      width: calculateNodeWidth(node),
+    })),
   );
   let svgWidth = $derived(Math.max(LABEL_WIDTH + dayCount * DAY_WIDTH, 480));
   let svgHeight = $derived(Math.max(HEADER_HEIGHT + scheduledNodes.length * ROW_HEIGHT, 180));
+  let svgElement = $state<SVGSVGElement>();
+  let draggedNode = $state<RoadmapNode | null>(null);
+  let creationStartDate = $state<string | null>(null);
+  let creationStartX = $state<number | null>(null);
+  let writing = $state(false);
 
   function isScheduled(node: RoadmapNode): node is RoadmapNode & { startDate: string; dueDate: string } {
     return (
@@ -88,13 +102,151 @@
   function truncate(value: string, limit = 22): string {
     return value.length <= limit ? value : `${value.slice(0, Math.max(1, limit - 1))}…`;
   }
+
+  function today(): string {
+    const now = new Date();
+    return new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())).toISOString().slice(0, 10);
+  }
+
+  function dateFromPointer(event: PointerEvent | DragEvent): string | null {
+    if (svgElement === undefined) {
+      return null;
+    }
+
+    const bounds = svgElement.getBoundingClientRect();
+    if (bounds.width === 0) {
+      return null;
+    }
+
+    const x = (event.clientX - bounds.left) * (svgWidth / bounds.width);
+    const dayIndex = Math.max(0, Math.floor((x - LABEL_WIDTH) / DAY_WIDTH));
+    return addDays(timelineStart, dayIndex);
+  }
+
+  function onNodePointerDown(event: PointerEvent, node: RoadmapNode): void {
+    if (event.button !== 0 || writing) {
+      return;
+    }
+
+    event.stopPropagation();
+    draggedNode = node;
+    svgElement?.setPointerCapture(event.pointerId);
+  }
+
+  function onTimelinePointerDown(event: PointerEvent): void {
+    if (writing || !isTimelineBackground(event.target)) {
+      return;
+    }
+
+    creationStartDate = dateFromPointer(event);
+    creationStartX = event.clientX;
+    svgElement?.setPointerCapture(event.pointerId);
+  }
+
+  function onTimelinePointerUp(event: PointerEvent): void {
+    if (draggedNode !== null) {
+      void persistReschedule(draggedNode, event);
+      draggedNode = null;
+      return;
+    }
+
+    if (creationStartDate !== null && creationStartX !== null) {
+      const endDate = dateFromPointer(event);
+      const hasDragged = Math.abs(event.clientX - creationStartX) >= 8;
+      if (endDate !== null && hasDragged) {
+        const startDate = creationStartDate <= endDate ? creationStartDate : endDate;
+        const dueDate = creationStartDate <= endDate ? endDate : creationStartDate;
+        void persistCreate(startDate, dueDate);
+      }
+    }
+
+    clearCreationGesture();
+  }
+
+  function onTimelinePointerCancel(): void {
+    draggedNode = null;
+    clearCreationGesture();
+  }
+
+  function onTimelineDrop(event: DragEvent): void {
+    event.preventDefault();
+    const nodeId = event.dataTransfer?.getData('application/x-neuro-roadmap-node');
+    const startDate = dateFromPointer(event);
+    const node = nodeId === undefined ? undefined : nodes.find((candidate) => candidate.id === nodeId);
+    if (node === undefined || startDate === null) {
+      return;
+    }
+
+    void persistSchedule(node, startDate, startDate);
+  }
+
+  async function persistReschedule(node: RoadmapNode, event: PointerEvent): Promise<void> {
+    const startDate = dateFromPointer(event);
+    if (startDate === null || !isScheduled(node)) {
+      return;
+    }
+
+    const span = calculateCalendarDaySpan(node.startDate, node.dueDate);
+    if (span === null) {
+      return;
+    }
+
+    writing = true;
+    try {
+      await onReschedule(node, startDate, addDays(startDate, span - 1));
+    } finally {
+      writing = false;
+    }
+  }
+
+  async function persistSchedule(node: RoadmapNode, startDate: string, dueDate: string): Promise<void> {
+    if (writing) {
+      return;
+    }
+
+    writing = true;
+    try {
+      await onSchedule(node, startDate, dueDate);
+    } finally {
+      writing = false;
+    }
+  }
+
+  async function persistCreate(startDate: string, dueDate: string): Promise<void> {
+    if (writing) {
+      return;
+    }
+
+    writing = true;
+    try {
+      await onCreate(startDate, dueDate);
+    } finally {
+      writing = false;
+    }
+  }
+
+  function clearCreationGesture(): void {
+    creationStartDate = null;
+    creationStartX = null;
+  }
+
+  function isTimelineBackground(target: EventTarget | null): target is SVGRectElement {
+    return target instanceof SVGRectElement && target.classList.contains('timeline-background');
+  }
+
+  function onNodeKeyDown(event: KeyboardEvent, node: RoadmapNode): void {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      onEdit(node);
+    }
+  }
 </script>
 
 <section class="gantt" aria-label="Gantt timeline">
-  {#if scheduledNodes.length === 0}
-    <p class="empty-state">No scheduled roadmap nodes match the current filters.</p>
-  {:else}
-    <div class="timeline-scroll">
+  <div class="timeline-scroll">
+    {#if scheduledNodes.length === 0}
+      <p class="timeline-hint">Drag across the empty timeline to create a scheduled note, or drop an unscheduled task here.</p>
+    {/if}
       <svg
         class="timeline"
         width={svgWidth}
@@ -102,6 +254,12 @@
         viewBox={`0 0 ${svgWidth} ${svgHeight}`}
         role="img"
         aria-label="Roadmap timeline"
+        bind:this={svgElement}
+        onpointerdown={onTimelinePointerDown}
+        onpointerup={onTimelinePointerUp}
+        onpointercancel={onTimelinePointerCancel}
+        ondragover={(event) => event.preventDefault()}
+        ondrop={onTimelineDrop}
       >
         <rect width={svgWidth} height={svgHeight} class="timeline-background" />
         {#each dayLabels as date, index (date)}
@@ -129,6 +287,12 @@
               height="29"
               rx="5"
               class={`timeline-node energy-${timelineNode.node.energyLevel}`}
+              role="button"
+              tabindex="0"
+              aria-label={`Reschedule or edit ${timelineNode.node.title}`}
+              onpointerdown={(event) => onNodePointerDown(event, timelineNode.node)}
+              ondblclick={() => onEdit(timelineNode.node)}
+              onkeydown={(event) => onNodeKeyDown(event, timelineNode.node)}
             />
             <text x={timelineNode.x + 8} y={timelineNode.y + 19} class="node-text">
               {truncate(timelineNode.node.title, Math.max(8, Math.floor(timelineNode.width / 8)))}
@@ -136,8 +300,7 @@
           </g>
         {/each}
       </svg>
-    </div>
-  {/if}
+  </div>
 </section>
 
 <style>
@@ -152,6 +315,13 @@
     border: 1px solid var(--border-color);
     border-radius: var(--radius-m);
     background: var(--background-primary);
+  }
+
+  .timeline-hint {
+    margin: 0;
+    padding: var(--size-4-2) var(--size-4-3);
+    color: var(--text-muted);
+    background: var(--background-secondary);
   }
 
   .timeline {
@@ -208,12 +378,4 @@
     opacity: 0.35;
   }
 
-  .empty-state {
-    margin: 0;
-    padding: var(--size-4-4);
-    color: var(--text-muted);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-m);
-    background: var(--background-secondary);
-  }
 </style>
