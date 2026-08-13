@@ -86,7 +86,7 @@
     display: grid;
     gap: var(--size-4-3);
     padding: var(--size-4-3);
-    border: 1px solid var(--border-color);
+    border: var(--border-width) solid var(--border-color);
     border-radius: var(--radius-m);
     background: var(--background-primary);
     color: var(--text-normal);
@@ -118,7 +118,7 @@
     display: grid;
     gap: var(--size-2-1);
     padding: var(--size-4-2);
-    border: 1px solid var(--border-color);
+    border: var(--border-width) solid var(--border-color);
     border-left-width: var(--border-width);
     border-radius: var(--radius-s);
     background: var(--background-secondary);
@@ -129,17 +129,15 @@
   }
 
   .energy-low {
-    border-left-color: var(--color-green);
     opacity: 0.7;
   }
 
   .energy-medium {
-    border-left-color: var(--color-yellow);
     opacity: 0.85;
   }
 
   .energy-high {
-    border-left-color: var(--color-orange);
+    border-left-color: var(--interactive-accent);
   }
 
   .horizon-list {
@@ -154,7 +152,7 @@
     align-content: start;
     gap: var(--size-2-2);
     padding: var(--size-4-2);
-    border: 1px solid var(--border-color);
+    border: var(--border-width) solid var(--border-color);
     border-radius: var(--radius-s);
     background: var(--background-secondary);
   }
@@ -170,15 +168,15 @@
   }
 
   .horizon-list p.energy-low {
-    border-left-color: var(--color-green);
+    opacity: 0.7;
   }
 
   .horizon-list p.energy-medium {
-    border-left-color: var(--color-yellow);
+    opacity: 0.85;
   }
 
   .horizon-list p.energy-high {
-    border-left-color: var(--color-orange);
+    border-left-color: var(--interactive-accent);
   }
 
   .horizon-list.compact {

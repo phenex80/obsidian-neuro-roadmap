@@ -28,6 +28,17 @@
       transfer.effectAllowed = 'move';
     }
   }
+
+  function formatLabel(value: string): string {
+    return value.replace('-', ' ').replace(/^./, (letter) => letter.toUpperCase());
+  }
+
+  function onCardKeyDown(event: KeyboardEvent, node: RoadmapNode): void {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      onEdit(node);
+    }
+  }
 </script>
 
 <aside class="unscheduled-drawer" aria-label="Unscheduled nodes">
@@ -40,17 +51,24 @@
   {:else}
     <ul>
       {#each unscheduledNodes as node (node.id)}
-        <li
-          class:inactive={isInactive(node.path)}
-          draggable="true"
-          ondragstart={(event) => onDragStart(event, node)}
-          ondblclick={() => onEdit(node)}
-        >
-          <span class={`energy-indicator energy-${node.energyLevel}`}></span>
-          <div>
+        <li class:inactive={isInactive(node.path)}>
+          <button
+            type="button"
+            class="task-card"
+            title={node.path}
+            draggable="true"
+            ondragstart={(event) => onDragStart(event, node)}
+            ondblclick={() => onEdit(node)}
+            onkeydown={(event) => onCardKeyDown(event, node)}
+          >
             <strong>{node.title}</strong>
-            <small>{node.path}</small>
-          </div>
+            <span class="metadata-row">
+              <span class="metadata-badge">{formatLabel(node.status)}</span>
+              <span class={`metadata-badge energy-badge energy-${node.energyLevel}`}>
+                {formatLabel(node.energyLevel)} energy
+              </span>
+            </span>
+          </button>
         </li>
       {/each}
     </ul>
@@ -59,8 +77,9 @@
 
 <style>
   .unscheduled-drawer {
+    align-self: start;
     padding: var(--size-4-3);
-    border: 1px solid var(--border-color);
+    border: var(--border-width) solid var(--border-color);
     border-radius: var(--radius-m);
     background: var(--background-secondary);
   }
@@ -84,8 +103,7 @@
   }
 
   header span,
-  p,
-  small {
+  p {
     color: var(--text-muted);
   }
 
@@ -96,44 +114,70 @@
     list-style: none;
   }
 
-  li {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    gap: var(--size-4-2);
-    align-items: start;
-    padding: var(--size-4-2);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-s);
-    background: var(--background-primary);
+  .task-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-3);
+    min-width: 0;
+    padding: var(--size-4-3);
+    border: var(--border-width) solid var(--border-color);
+    border-radius: var(--radius-m);
+    background: var(--background-primary-alt);
+    color: var(--text-normal);
+    font: inherit;
+    text-align: left;
+    cursor: grab;
+    transition: border-color var(--anim-duration-fast) var(--anim-motion-swing);
+  }
+
+  .task-card:hover,
+  .task-card:focus-visible {
+    border-color: var(--interactive-accent);
+  }
+
+  .task-card:active {
+    cursor: grabbing;
   }
 
   li.inactive {
-    opacity: 0.35;
+    opacity: var(--dimmed);
   }
 
-  small {
-    display: block;
-    margin-top: var(--size-2-1);
+  .task-card strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .energy-indicator {
-    width: var(--size-4-2);
-    height: var(--size-4-2);
-    margin-top: var(--size-2-1);
-    border-radius: var(--radius-round);
+  .metadata-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--size-2-2);
+    margin-top: auto;
   }
 
-  .energy-indicator.energy-low {
-    background: var(--color-green);
+  .metadata-badge {
+    display: inline-flex;
+    align-items: center;
+    width: max-content;
+    padding: var(--size-2-1) var(--size-4-2);
+    border: var(--border-width) solid var(--border-color);
+    border-radius: var(--radius-l);
+    background: var(--background-modifier-hover);
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+  }
+
+  .energy-badge.energy-low {
     opacity: 0.7;
   }
 
-  .energy-indicator.energy-medium {
-    background: var(--color-yellow);
+  .energy-badge.energy-medium {
     opacity: 0.85;
   }
 
-  .energy-indicator.energy-high {
-    background: var(--color-orange);
+  .energy-badge.energy-high {
+    border-color: var(--interactive-accent);
+    color: var(--text-normal);
   }
 </style>

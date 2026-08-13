@@ -10,14 +10,14 @@
 <style>
   .codeblock-error {
     padding: var(--size-4-3);
-    border: 1px solid var(--color-orange);
+    border: var(--border-width) solid var(--interactive-accent);
     border-radius: var(--radius-m);
     background: var(--background-secondary);
     color: var(--text-normal);
   }
 
   strong {
-    color: var(--color-orange);
+    color: var(--text-normal);
   }
 
   p {

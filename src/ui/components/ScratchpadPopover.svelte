@@ -99,7 +99,7 @@
     max-height: min(42rem, 100%);
     padding: var(--size-4-4);
     overflow: auto;
-    border: 1px solid var(--border-color);
+    border: var(--border-width) solid var(--border-color);
     border-radius: var(--radius-l);
     background: var(--background-primary);
     color: var(--text-normal);
@@ -136,7 +136,7 @@
   textarea {
     min-height: 9rem;
     padding: var(--size-4-2);
-    border: 1px solid var(--border-color);
+    border: var(--border-width) solid var(--border-color);
     border-radius: var(--radius-s);
     resize: vertical;
     background: var(--background-secondary);
@@ -152,14 +152,14 @@
   .markdown-preview-view {
     min-height: var(--size-4-6);
     padding: var(--size-4-3);
-    border: 1px solid var(--border-color);
+    border: var(--border-width) solid var(--border-color);
     border-radius: var(--radius-s);
     background: var(--background-secondary);
   }
 
   button {
     padding: var(--size-2-2) var(--size-4-2);
-    border: 1px solid var(--border-color);
+    border: var(--border-width) solid var(--border-color);
     border-radius: var(--radius-s);
     background: var(--background-secondary);
     color: var(--text-normal);

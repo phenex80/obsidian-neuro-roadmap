@@ -78,6 +78,12 @@
     return filename.endsWith('.md') ? filename.slice(0, -3) : filename;
   }
 
+  function toggleSubject(subjectPath: string): void {
+    selectedSubjects = selectedSubjects.includes(subjectPath)
+      ? selectedSubjects.filter((subject) => subject !== subjectPath)
+      : [...selectedSubjects, subjectPath];
+  }
+
   async function appendScratchpad(text: string): Promise<void> {
     if (scratchpadNode !== null) {
       await scheduler.appendScratchpad(scratchpadNode, text);
@@ -86,9 +92,9 @@
 </script>
 
 <main class="roadmap-workspace">
-  <header class="toolbar">
-    <label>
-      <span>Semester</span>
+  <header class="app-header">
+    <label class="select-control">
+      <span class="control-label">Semester</span>
       <select bind:value={semester} aria-label="Semester filter">
         <option value="all">All semesters</option>
         {#each semesters as availableSemester (availableSemester)}
@@ -97,51 +103,66 @@
       </select>
     </label>
 
-    <label>
-      <span>Subjects</span>
-      <select bind:value={selectedSubjects} multiple aria-label="Subject filter">
-        {#each subjects as subjectPath (subjectPath)}
-          <option value={subjectPath}>{formatSubject(subjectPath)}</option>
+    <details class="subject-control">
+      <summary>
+        <span>Subjects</span>
+        {#if selectedSubjects.length > 0}
+          <span class="selection-badge">{selectedSubjects.length}</span>
+        {/if}
+      </summary>
+      <div class="subject-menu">
+        {#if subjects.length === 0}
+          <span class="empty-option">No subjects indexed</span>
+        {:else}
+          {#each subjects as subjectPath (subjectPath)}
+            <label title={subjectPath}>
+              <input
+                type="checkbox"
+                checked={selectedSubjects.includes(subjectPath)}
+                onchange={() => toggleSubject(subjectPath)}
+              />
+              <span>{formatSubject(subjectPath)}</span>
+            </label>
+          {/each}
+        {/if}
+      </div>
+    </details>
+
+    <div class="control-group">
+      <span class="control-label">Energy</span>
+      <div class="segmented-control" aria-label="Energy level filter">
+        {#each ENERGY_FILTERS as level (level)}
+          <button
+            class:active={energyLevel === level}
+            aria-pressed={energyLevel === level}
+            onclick={() => (energyLevel = level)}
+          >
+            {level === 'all' ? 'All' : level.charAt(0).toUpperCase() + level.slice(1)}
+          </button>
         {/each}
-      </select>
-    </label>
+      </div>
+    </div>
 
-    <div class="filter-group" aria-label="Energy level filter">
-      <span>Energy</span>
-      {#each ENERGY_FILTERS as level (level)}
-        <button
-          class:active={energyLevel === level}
-          aria-pressed={energyLevel === level}
-          onclick={() => (energyLevel = level)}
-        >
-          {level === 'all' ? 'All' : level.charAt(0).toUpperCase() + level.slice(1)}
+    <div class="control-group view-control">
+      <span class="control-label">View</span>
+      <div class="segmented-control" aria-label="Roadmap view mode">
+        <button class:active={viewMode === 'gantt'} aria-pressed={viewMode === 'gantt'} onclick={() => (viewMode = 'gantt')}>
+          Gantt
         </button>
-      {/each}
+        <button class:active={viewMode === 'horizon'} aria-pressed={viewMode === 'horizon'} onclick={() => (viewMode = 'horizon')}>
+          Horizon
+        </button>
+      </div>
     </div>
 
-    <div class="filter-group" aria-label="Roadmap view mode">
-      <span>View</span>
-      <button class:active={viewMode === 'gantt'} aria-pressed={viewMode === 'gantt'} onclick={() => (viewMode = 'gantt')}>
-        Gantt
-      </button>
-      <button class:active={viewMode === 'horizon'} aria-pressed={viewMode === 'horizon'} onclick={() => (viewMode = 'horizon')}>
-        Horizon
-      </button>
-    </div>
-
-    <button class:active={focusMode} aria-pressed={focusMode} onclick={() => (focusMode = !focusMode)}>
-      Focus active tasks
+    <button class="focus-toggle" class:active={focusMode} aria-pressed={focusMode} onclick={() => (focusMode = !focusMode)}>
+      Focus mode
     </button>
   </header>
 
-  <p class="scope-summary">
-    {filteredNodes.length} {filteredNodes.length === 1 ? 'node' : 'nodes'} in scope
-    {#if focusMode}
-      · non-active tasks are dimmed
-    {/if}
-  </p>
-
-  <CircularDependencyAlert cycles={circularDependencyCycles} />
+  <div class="notice-slot">
+    <CircularDependencyAlert cycles={circularDependencyCycles} />
+  </div>
 
   <div class="roadmap-layout">
     <div class="main-panel">
@@ -174,78 +195,196 @@
 <style>
   .roadmap-workspace {
     display: grid;
-    gap: var(--size-4-4);
+    align-content: start;
+    gap: var(--size-4-3);
     min-height: 100%;
-    padding: var(--size-4-4);
     background: var(--background-primary);
     color: var(--text-normal);
   }
 
-  .toolbar,
-  .filter-group {
+  .app-header {
+    position: sticky;
+    top: 0;
+    z-index: 20;
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--size-4-2);
+    padding: var(--size-4-2) var(--size-4-3);
+    border-bottom: var(--border-width) solid var(--border-color);
+    background: var(--background-primary);
   }
 
-  .toolbar {
-    padding-bottom: var(--size-4-3);
-    border-bottom: 1px solid var(--border-color);
+  .select-control,
+  .control-group {
+    display: flex;
+    align-items: center;
+    gap: var(--size-2-2);
   }
 
-  label,
-  .filter-group {
+  .control-label {
     color: var(--text-muted);
-    font-size: var(--font-ui-small);
+    font-size: var(--font-ui-smaller);
+    font-weight: var(--font-medium);
   }
 
   select,
-  button {
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-s);
-    background: var(--background-secondary);
+  .subject-control summary,
+  .focus-toggle {
+    min-height: var(--input-height);
+    padding-inline: var(--size-4-2);
+    border: var(--border-width) solid var(--border-color);
+    border-radius: var(--radius-m);
+    background: var(--background-primary-alt);
     color: var(--text-normal);
     font: inherit;
   }
 
   select {
-    padding: var(--size-2-2) var(--size-4-2);
+    max-width: clamp(10rem, 16vw, 16rem);
   }
 
-  select[multiple] {
-    min-height: var(--size-4-6);
+  .subject-control {
+    position: relative;
   }
 
-  button {
-    padding: var(--size-2-2) var(--size-4-2);
+  .subject-control summary {
+    display: flex;
+    align-items: center;
+    gap: var(--size-2-2);
+    list-style: none;
     cursor: pointer;
   }
 
-  button.active {
-    border-color: var(--interactive-accent);
-    background: var(--interactive-accent);
-    color: var(--text-on-accent);
+  .subject-control summary::-webkit-details-marker {
+    display: none;
   }
 
-  .scope-summary {
-    margin: 0;
+  .selection-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: var(--size-4-5);
+    padding-inline: var(--size-2-1);
+    border-radius: var(--radius-l);
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    font-size: var(--font-ui-smaller);
+  }
+
+  .subject-menu {
+    position: absolute;
+    top: calc(100% + var(--size-2-2));
+    left: 0;
+    z-index: 30;
+    display: grid;
+    gap: var(--size-2-1);
+    width: max-content;
+    min-width: 100%;
+    max-width: clamp(14rem, 32vw, 24rem);
+    max-height: clamp(12rem, 45vh, 24rem);
+    padding: var(--size-4-2);
+    overflow: auto;
+    border: var(--border-width) solid var(--border-color);
+    border-radius: var(--radius-m);
+    background: var(--background-primary-alt);
+    box-shadow: var(--shadow-s);
+  }
+
+  .subject-menu label {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-2);
+    min-width: 0;
+    padding: var(--size-2-2) var(--size-4-2);
+    border-radius: var(--radius-s);
+    color: var(--text-normal);
+    cursor: pointer;
+  }
+
+  .subject-menu label:hover {
+    background: var(--background-modifier-hover);
+  }
+
+  .subject-menu label span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .subject-menu input {
+    accent-color: var(--interactive-accent);
+  }
+
+  .empty-option {
+    padding: var(--size-4-2);
     color: var(--text-muted);
     font-size: var(--font-ui-smaller);
   }
 
+  .segmented-control {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--size-2-1);
+    padding: var(--size-2-1);
+    border: var(--border-width) solid var(--border-color);
+    border-radius: var(--radius-l);
+    background: var(--background-secondary);
+  }
+
+  .segmented-control button,
+  .focus-toggle {
+    border: var(--border-width) solid var(--border-color);
+    border-radius: var(--radius-l);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .segmented-control button {
+    padding: var(--size-2-2) var(--size-4-2);
+    background: var(--background-secondary);
+    color: var(--text-muted);
+  }
+
+  .segmented-control button:hover,
+  .focus-toggle:hover {
+    color: var(--text-normal);
+    background: var(--background-modifier-hover);
+  }
+
+  .segmented-control button.active,
+  .focus-toggle.active {
+    border-color: var(--interactive-accent);
+    background: var(--background-primary-alt);
+    color: var(--text-normal);
+    box-shadow: var(--shadow-s);
+  }
+
+  .view-control {
+    margin-inline-start: auto;
+  }
+
   .roadmap-layout {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(14rem, 20rem);
-    gap: var(--size-4-4);
+    grid-template-columns: minmax(0, 1fr) minmax(14rem, min(22rem, 28%));
+    gap: var(--size-4-3);
     min-width: 0;
+    padding: 0 var(--size-4-3) var(--size-4-3);
+  }
+
+  .notice-slot {
+    padding-inline: var(--size-4-3);
   }
 
   .main-panel {
     min-width: 0;
   }
 
-  @media (max-width: 700px) {
+  @media (max-width: 54rem) {
+    .view-control {
+      margin-inline-start: 0;
+    }
+
     .roadmap-layout {
       grid-template-columns: minmax(0, 1fr);
     }

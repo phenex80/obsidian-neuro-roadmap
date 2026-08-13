@@ -49,6 +49,17 @@
   function columnTitle(column: HorizonColumn): string {
     return column.charAt(0).toUpperCase() + column.slice(1);
   }
+
+  function formatLabel(value: string): string {
+    return value.replace('-', ' ').replace(/^./, (letter) => letter.toUpperCase());
+  }
+
+  function onCardKeyDown(event: KeyboardEvent, node: RoadmapNode): void {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      onEdit(node);
+    }
+  }
 </script>
 
 <section class="horizon" aria-label="Horizon board">
@@ -63,14 +74,22 @@
           <p class="column-empty">Nothing here yet.</p>
         {:else}
           {#each columns[column] as node (node.id)}
-            <article
+            <button
+              type="button"
               class={`roadmap-card energy-${node.energyLevel}`}
               class:inactive={isInactive(node.path)}
+              title={node.path}
               ondblclick={() => onEdit(node)}
+              onkeydown={(event) => onCardKeyDown(event, node)}
             >
-              <h4>{node.title}</h4>
-              <p>{node.dueDate === undefined ? 'Unscheduled' : `Due ${node.dueDate}`}</p>
-            </article>
+              <span class="card-title">{node.title}</span>
+              <span class="metadata-row">
+                <span class="metadata-badge">{formatLabel(node.status)}</span>
+                <span class={`metadata-badge energy-badge energy-${node.energyLevel}`}>
+                  {formatLabel(node.energyLevel)} energy
+                </span>
+              </span>
+            </button>
           {/each}
         {/if}
       </div>
@@ -81,7 +100,7 @@
 <style>
   .horizon {
     display: grid;
-    grid-template-columns: repeat(3, minmax(12rem, 1fr));
+    grid-template-columns: repeat(3, minmax(clamp(12rem, 24vw, 20rem), 1fr));
     gap: var(--size-4-3);
     overflow-x: auto;
   }
@@ -89,7 +108,7 @@
   .horizon-column {
     min-height: 14rem;
     padding: var(--size-4-3);
-    border: 1px solid var(--border-color);
+    border: var(--border-width) solid var(--border-color);
     border-radius: var(--radius-m);
     background: var(--background-secondary);
   }
@@ -102,18 +121,17 @@
   }
 
   h3,
-  h4,
   p {
     margin: 0;
   }
 
   h3,
-  h4 {
+  .card-title {
     color: var(--text-normal);
   }
 
   header span,
-  p {
+  .column-empty {
     color: var(--text-muted);
   }
 
@@ -123,30 +141,67 @@
   }
 
   .roadmap-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-3);
+    min-width: 0;
     padding: var(--size-4-3);
-    border: 1px solid var(--border-color);
-    border-left-width: var(--border-width);
-    border-radius: var(--radius-s);
-    background: var(--background-primary);
+    border: var(--border-width) solid var(--border-color);
+    border-radius: var(--radius-m);
+    background: var(--background-primary-alt);
+    color: var(--text-normal);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color var(--anim-duration-fast) var(--anim-motion-swing);
   }
 
-  .roadmap-card.energy-low {
-    border-left-color: var(--color-green);
+  .roadmap-card:hover,
+  .roadmap-card:focus-visible {
+    border-color: var(--interactive-accent);
+  }
+
+  .card-title {
+    overflow: hidden;
+    font-weight: var(--font-semibold);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .metadata-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--size-2-2);
+    margin-top: auto;
+  }
+
+  .metadata-badge {
+    display: inline-flex;
+    align-items: center;
+    width: max-content;
+    padding: var(--size-2-1) var(--size-4-2);
+    border: var(--border-width) solid var(--border-color);
+    border-radius: var(--radius-l);
+    background: var(--background-modifier-hover);
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+  }
+
+  .energy-badge.energy-low {
     opacity: 0.7;
   }
 
-  .roadmap-card.energy-medium {
-    border-left-color: var(--color-yellow);
+  .energy-badge.energy-medium {
     opacity: 0.85;
   }
 
-  .roadmap-card.energy-high {
-    border-left-color: var(--color-orange);
-    opacity: 1;
+  .energy-badge.energy-high {
+    border-color: var(--interactive-accent);
+    color: var(--text-normal);
   }
 
   .roadmap-card.inactive {
-    opacity: 0.35;
+    opacity: var(--dimmed);
   }
 
   .column-empty {
