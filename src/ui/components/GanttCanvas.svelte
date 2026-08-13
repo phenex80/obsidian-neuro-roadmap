@@ -4,14 +4,14 @@
 
   let {
     nodes,
-    isInactive,
+    scale,
     onReschedule,
     onSchedule,
     onCreate,
     onEdit,
   }: {
     nodes: readonly RoadmapNode[];
-    isInactive: (path: string) => boolean;
+    scale: 'days' | 'weeks' | 'months';
     onReschedule: (node: RoadmapNode, startDate: string, dueDate: string) => Promise<void>;
     onSchedule: (node: RoadmapNode, startDate: string, dueDate: string) => Promise<void>;
     onCreate: (startDate: string, dueDate: string) => Promise<void>;
@@ -19,29 +19,53 @@
   } = $props();
 
   const MILLISECONDS_PER_DAY = 86_400_000;
-  const MINIMUM_DAY_COUNT = 14;
   const EMPTY_ROW_COUNT = 3;
+
+  type ScheduledNode = RoadmapNode & { startDate: string; dueDate: string };
+
+  interface Swimlane {
+    key: string;
+    label: string;
+    nodes: readonly ScheduledNode[];
+    headerRow: number;
+    endRow: number;
+  }
+
+  interface HeaderSegment {
+    key: string;
+    label: string;
+    startColumn: number;
+    span: number;
+  }
 
   let scheduledNodes = $derived(
     nodes
       .filter(isScheduled)
       .sort((left, right) => left.startDate.localeCompare(right.startDate)),
   );
+  let groupedNodes = $derived(groupScheduledNodes(scheduledNodes));
+  let swimlanes = $derived(buildSwimlanes(groupedNodes));
+  let minimumDayCount = $derived(scale === 'days' ? 14 : scale === 'weeks' ? 84 : 365);
   let timelineStart = $derived(scheduledNodes[0]?.startDate ?? today());
-  let timelineEnd = $derived(calculateTimelineEnd(scheduledNodes) ?? addDays(timelineStart, MINIMUM_DAY_COUNT - 1));
-  let dayCount = $derived(Math.max(daysBetween(timelineStart, timelineEnd) + 1, MINIMUM_DAY_COUNT));
-  let rowCount = $derived(Math.max(scheduledNodes.length, EMPTY_ROW_COUNT));
+  let timelineEnd = $derived(calculateTimelineEnd(scheduledNodes) ?? addDays(timelineStart, minimumDayCount - 1));
+  let dayCount = $derived(Math.max(daysBetween(timelineStart, timelineEnd) + 1, minimumDayCount));
+  let populatedRowCount = $derived(swimlanes.reduce((total, lane) => total + lane.nodes.length + 1, 0));
+  let rowCount = $derived(Math.max(populatedRowCount, EMPTY_ROW_COUNT));
   let dayLabels = $derived(
     Array.from({ length: dayCount }, (_, index) => addDays(timelineStart, index)),
   );
+  let headerSegments = $derived(buildHeaderSegments(dayLabels, scale));
   let timelineNodes = $derived(
-    scheduledNodes.map((node, index) => ({
-      node,
-      row: index + 1,
-      startColumn: daysBetween(timelineStart, node.startDate) + 1,
-      spanColumns: calculateBufferedDaySpan(node),
-    })),
+    swimlanes.flatMap((lane) =>
+      lane.nodes.map((node, index) => ({
+        node,
+        row: lane.headerRow + index + 1,
+        startColumn: daysBetween(timelineStart, node.startDate) + 1,
+        spanColumns: calculateBufferedDaySpan(node),
+      })),
+    ),
   );
+  let rowNumbers = $derived(Array.from({ length: rowCount }, (_, index) => index + 1));
 
   let timelineBody = $state<HTMLDivElement>();
   let draggedNode = $state<RoadmapNode | null>(null);
@@ -49,7 +73,7 @@
   let creationStartX = $state<number | null>(null);
   let writing = $state(false);
 
-  function isScheduled(node: RoadmapNode): node is RoadmapNode & { startDate: string; dueDate: string } {
+  function isScheduled(node: RoadmapNode): node is ScheduledNode {
     return (
       node.startDate !== undefined &&
       node.dueDate !== undefined &&
@@ -57,7 +81,7 @@
     );
   }
 
-  function calculateBufferedDaySpan(node: RoadmapNode & { startDate: string; dueDate: string }): number {
+  function calculateBufferedDaySpan(node: ScheduledNode): number {
     const duration = calculateBufferedDuration(node.startDate, node.dueDate, node.durationBuffer);
     return Math.max(1, Math.ceil(duration ?? 1));
   }
@@ -94,6 +118,106 @@
     );
   }
 
+  function groupScheduledNodes(items: readonly ScheduledNode[]): Map<string, ScheduledNode[]> {
+    const grouped = new Map<string, ScheduledNode[]>();
+    for (const node of items) {
+      const subject = node.subject ?? 'Nezaradené';
+      const subjectNodes = grouped.get(subject) ?? [];
+      subjectNodes.push(node);
+      grouped.set(subject, subjectNodes);
+    }
+
+    return new Map(
+      Array.from(grouped.entries()).sort(([left], [right]) => {
+        if (left === 'Nezaradené') return 1;
+        if (right === 'Nezaradené') return -1;
+        return formatSubject(left).localeCompare(formatSubject(right));
+      }),
+    );
+  }
+
+  function buildSwimlanes(groups: ReadonlyMap<string, readonly ScheduledNode[]>): Swimlane[] {
+    let nextRow = 1;
+    return Array.from(groups.entries()).map(([key, subjectNodes]) => {
+      const headerRow = nextRow;
+      const endRow = headerRow + subjectNodes.length;
+      nextRow = endRow + 1;
+      return {
+        key,
+        label: formatSubject(key),
+        nodes: subjectNodes,
+        headerRow,
+        endRow,
+      };
+    });
+  }
+
+  function formatSubject(subject: string): string {
+    if (subject === 'Nezaradené') {
+      return subject;
+    }
+
+    const filename = subject.split('/').at(-1) ?? subject;
+    return filename.endsWith('.md') ? filename.slice(0, -3) : filename;
+  }
+
+  function buildHeaderSegments(
+    dates: readonly string[],
+    timelineScale: 'days' | 'weeks' | 'months',
+  ): HeaderSegment[] {
+    if (timelineScale === 'days') {
+      return dates.map((date, index) => ({
+        key: date,
+        label: formatDay(date),
+        startColumn: index + 1,
+        span: 1,
+      }));
+    }
+
+    const segments: HeaderSegment[] = [];
+    for (const [index, date] of dates.entries()) {
+      const label = timelineScale === 'weeks' ? formatWeek(date) : formatMonth(date);
+      const key = timelineScale === 'weeks' ? formatWeekKey(date) : `${timelineScale}-${label}`;
+      const previous = segments.at(-1);
+      if (previous?.key === key) {
+        previous.span += 1;
+      } else {
+        segments.push({ key, label, startColumn: index + 1, span: 1 });
+      }
+    }
+    return segments;
+  }
+
+  function formatWeek(date: string): string {
+    return formatWeekKey(date).split('-').at(-1) ?? formatWeekKey(date);
+  }
+
+  function formatWeekKey(date: string): string {
+    const current = new Date(`${date}T00:00:00Z`);
+    const day = current.getUTCDay() || 7;
+    current.setUTCDate(current.getUTCDate() + 4 - day);
+    const yearStart = new Date(Date.UTC(current.getUTCFullYear(), 0, 1));
+    const week = Math.ceil(((current.getTime() - yearStart.getTime()) / MILLISECONDS_PER_DAY + 1) / 7);
+    return `${current.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+  }
+
+  function formatMonth(date: string): string {
+    return new Intl.DateTimeFormat(undefined, { month: 'short', year: 'numeric', timeZone: 'UTC' }).format(
+      new Date(`${date}T00:00:00Z`),
+    );
+  }
+
+  function getDayWidth(timelineScale: 'days' | 'weeks' | 'months'): string {
+    if (timelineScale === 'weeks') return '15px';
+    if (timelineScale === 'months') return '4px';
+    return 'clamp(4.5rem, 7vw, 6rem)';
+  }
+
+  function isWeekend(date: string): boolean {
+    const day = new Date(`${date}T00:00:00Z`).getUTCDay();
+    return day === 0 || day === 6;
+  }
+
   function today(): string {
     const now = new Date();
     return new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())).toISOString().slice(0, 10);
@@ -125,7 +249,7 @@
   }
 
   function onTimelinePointerDown(event: PointerEvent): void {
-    if (writing || isTimelinePill(event.target)) {
+    if (writing || isTimelinePill(event.target) || isSwimlaneHeader(event.target)) {
       return;
     }
 
@@ -219,30 +343,43 @@
   function isTimelinePill(target: EventTarget | null): boolean {
     return target instanceof Element && target.closest('.timeline-pill') !== null;
   }
+
+  function isSwimlaneHeader(target: EventTarget | null): boolean {
+    return target instanceof Element && target.closest('.swimlane-band') !== null;
+  }
 </script>
 
 <section class="gantt" aria-label="Gantt timeline">
   <div class="gantt-scroll">
-    <div class="gantt-shell">
+    <div class="gantt-shell" style={`--gantt-day-width: ${getDayWidth(scale)}`}>
       <aside class="task-rail" aria-label="Scheduled task list">
         <div class="rail-header">Tasks</div>
         <div class="task-list" style={`--row-count: ${rowCount}`}>
-          {#each scheduledNodes as node (node.id)}
-            <button
-              class:inactive={isInactive(node.path)}
-              title={node.path}
-              ondblclick={() => onEdit(node)}
-            >
-              <span>{node.title}</span>
-            </button>
+          {#each swimlanes as lane (lane.key)}
+            <div class="swimlane-label" style={`grid-row: ${lane.headerRow}`} title={lane.key}>
+              <span>{lane.label}</span>
+            </div>
+            {#each lane.nodes as node, index (node.id)}
+              <button
+                class:lane-end={index === lane.nodes.length - 1}
+                style={`grid-row: ${lane.headerRow + index + 1}`}
+                title={node.path}
+                ondblclick={() => onEdit(node)}
+              >
+                <span>{node.title}</span>
+              </button>
+            {/each}
           {/each}
         </div>
       </aside>
 
       <div class="timeline-panel" style={`--day-count: ${dayCount}; --row-count: ${rowCount}`}>
-        <div class="day-header" aria-hidden="true">
-          {#each dayLabels as date (date)}
-            <span title={date}>{formatDay(date)}</span>
+        <div class={`day-header scale-${scale}`} aria-hidden="true">
+          {#each headerSegments as segment (segment.key)}
+            <span
+              style={`grid-column: ${segment.startColumn} / span ${segment.span}`}
+              title={segment.label}
+            >{segment.label}</span>
           {/each}
         </div>
 
@@ -259,13 +396,26 @@
           ondrop={onTimelineDrop}
         >
           {#each dayLabels as date, index (date)}
-            <div class="day-track" style={`grid-column: ${index + 1}; grid-row: 1 / -1`} title={date}></div>
+            <div
+              class="day-track"
+              class:weekend={isWeekend(date)}
+              style={`grid-column: ${index + 1}; grid-row: 1 / -1`}
+              title={date}
+            ></div>
+          {/each}
+
+          {#each rowNumbers as row (row)}
+            <div class="row-track" style={`grid-column: 1 / -1; grid-row: ${row}`}></div>
+          {/each}
+
+          {#each swimlanes as lane (lane.key)}
+            <div class="swimlane-band" style={`grid-column: 1 / -1; grid-row: ${lane.headerRow}`}></div>
+            <div class="swimlane-separator" style={`grid-column: 1 / -1; grid-row: ${lane.endRow}`}></div>
           {/each}
 
           {#each timelineNodes as item (item.node.id)}
             <button
-              class={`timeline-pill energy-${item.node.energyLevel} ${item.node.hardDependency ? 'hard-dependency' : 'soft-dependency'}`}
-              class:inactive={isInactive(item.node.path)}
+              class={`timeline-pill status-${item.node.status} ${item.node.hardDependency ? 'hard-dependency' : 'soft-dependency'}`}
               class:dragging={draggedNode?.id === item.node.id}
               style={`grid-column: ${item.startColumn} / span ${item.spanColumns}; grid-row: ${item.row}`}
               title={item.node.title}
@@ -304,7 +454,6 @@
   .gantt-shell {
     --gantt-row-height: clamp(2.75rem, 6vh, 3.5rem);
     --gantt-header-height: clamp(2.5rem, 5vh, 3.25rem);
-    --gantt-day-width: clamp(4.5rem, 7vw, 6rem);
     display: grid;
     grid-template-columns: clamp(13rem, 25vw, 22rem) minmax(100%, max-content);
     width: max-content;
@@ -353,6 +502,28 @@
     text-align: left;
     background: var(--background-primary);
     color: var(--text-normal);
+  }
+
+  .swimlane-label {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    padding-inline: var(--size-4-3);
+    overflow: hidden;
+    border-bottom: var(--border-width) solid var(--border-color);
+    background: var(--background-secondary);
+    color: var(--text-normal);
+    font-weight: var(--font-semibold);
+  }
+
+  .swimlane-label span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .task-list button.lane-end {
+    border-bottom-color: var(--interactive-accent);
   }
 
   .task-list button:hover {
@@ -412,6 +583,30 @@
     border-right: var(--border-width) solid var(--border-color);
   }
 
+  .day-track.weekend {
+    background: var(--background-secondary);
+    opacity: var(--dimmed);
+  }
+
+  .row-track {
+    z-index: 0;
+    border-bottom: var(--border-width) solid var(--border-color);
+    pointer-events: none;
+  }
+
+  .swimlane-band {
+    z-index: 1;
+    background: var(--background-secondary);
+    border-bottom: var(--border-width) solid var(--border-color);
+  }
+
+  .swimlane-separator {
+    z-index: 1;
+    align-self: end;
+    border-bottom: var(--border-width) solid var(--interactive-accent);
+    pointer-events: none;
+  }
+
   .timeline-pill {
     z-index: 2;
     align-self: center;
@@ -432,7 +627,7 @@
   .timeline-pill:hover,
   .timeline-pill:focus-visible {
     border-color: var(--interactive-accent);
-    background: var(--interactive-hover);
+    box-shadow: var(--shadow-l);
   }
 
   .timeline-pill.dragging {
@@ -440,21 +635,28 @@
     opacity: var(--dimmed);
   }
 
-  .timeline-pill.energy-low {
-    opacity: 0.7;
+  .timeline-pill.status-todo {
+    background-color: var(--status-todo);
+    color: white;
   }
 
-  .timeline-pill.energy-medium {
-    opacity: 0.85;
+  .timeline-pill.status-in-progress {
+    background-color: var(--status-in-progress);
+    color: white;
   }
 
-  .timeline-pill.energy-high,
+  .timeline-pill.status-done {
+    background-color: var(--status-done);
+    color: white;
+  }
+
+  .timeline-pill.status-unscheduled {
+    background-color: var(--interactive-accent);
+    color: white;
+  }
+
   .timeline-pill.hard-dependency {
-    border-color: var(--interactive-accent);
-  }
-
-  .inactive {
-    opacity: var(--dimmed);
+    border-color: var(--background-modifier-border-focus);
   }
 
   .empty-hint {

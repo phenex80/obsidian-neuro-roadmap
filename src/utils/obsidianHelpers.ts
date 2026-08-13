@@ -59,7 +59,7 @@ export async function createRoadmapNote(app: App, startDate: string, dueDate: st
     `start_date: ${startDate}`,
     `due_date: ${dueDate}`,
     'duration_buffer: 1.3',
-    'energy_level: medium',
+    'priority: medium',
     'status: todo',
     'hard_dependency: false',
     '---',

@@ -1,9 +1,9 @@
 import type { CachedMetadata, MetadataCache, TFile } from 'obsidian';
 import {
-  ENERGY_LEVELS,
+  PRIORITIES,
   NODE_STATUSES,
   NODE_TYPES,
-  type EnergyLevel,
+  type Priority,
   type RoadmapNode,
   roadmapNodeFrontmatterSchema,
   wikilinkSchema,
@@ -16,7 +16,7 @@ const ROADMAP_FRONTMATTER_KEYS = new Set([
   'start_date',
   'due_date',
   'duration_buffer',
-  'energy_level',
+  'priority',
   'status',
   'parent',
   'depends_on',
@@ -26,9 +26,9 @@ const INLINE_TASK_PATTERN = /^\s*[-*+]\s+\[([^\]])\]\s+(.+?)\s*$/;
 const SUBJECT_PROPERTY_PATTERN = /\[subject::\s*(\[\[[^\]]+\]\])\s*\]/;
 const START_PROPERTY_PATTERN = /\[start::\s*([^\]]+?)\s*\]/;
 const DUE_PROPERTY_PATTERN = /\[due::\s*([^\]]+?)\s*\]/;
-const ENERGY_PROPERTY_PATTERN = /\[energy::\s*([^\]]+?)\s*\]/;
+const PRIORITY_PROPERTY_PATTERN = /\[priority::\s*([^\]]+?)\s*\]/;
 const INLINE_PROPERTY_PATTERN =
-  /\[(?:subject|start|due|energy)::\s*(?:\[\[[^\]]+\]\]|[^\]]+?)\s*\]/g;
+  /\[(?:subject|start|due|priority)::\s*(?:\[\[[^\]]+\]\]|[^\]]+?)\s*\]/g;
 const BLOCK_ID_PATTERN = /\s+\^([A-Za-z0-9-]+)\s*$/;
 
 type FrontmatterValues = Record<string, unknown>;
@@ -66,7 +66,7 @@ export class RoadmapParser {
     addDate(candidate, 'start_date', values['start_date']);
     addDate(candidate, 'due_date', values['due_date']);
     addPositiveNumber(candidate, 'duration_buffer', values['duration_buffer']);
-    addOption(candidate, 'energy_level', values['energy_level'], ENERGY_LEVELS);
+    addOption(candidate, 'priority', values['priority'], PRIORITIES);
     addOption(candidate, 'status', values['status'], NODE_STATUSES);
     addWikilink(candidate, 'parent', values['parent']);
     addWikilinkArray(candidate, 'depends_on', values['depends_on']);
@@ -91,7 +91,7 @@ export class RoadmapParser {
       startDate,
       dueDate,
       durationBuffer: data.duration_buffer,
-      energyLevel: data.energy_level,
+      priority: data.priority,
       status: data.status,
       parent: this.resolveWikilink(data.parent, file),
       dependsOn: data.depends_on
@@ -128,7 +128,7 @@ export class RoadmapParser {
       const subject = readWikilinkProperty(taskBody, SUBJECT_PROPERTY_PATTERN);
       const startDate = readDateProperty(taskBody, START_PROPERTY_PATTERN);
       const dueDate = readDateProperty(taskBody, DUE_PROPERTY_PATTERN);
-      const energyLevel = readEnergyProperty(taskBody);
+      const priority = readPriorityProperty(taskBody);
       const matchedBlockId = BLOCK_ID_PATTERN.exec(taskBody);
       const blockId = task.id ?? matchedBlockId?.[1];
 
@@ -136,7 +136,7 @@ export class RoadmapParser {
         subject === undefined &&
         startDate === undefined &&
         dueDate === undefined &&
-        energyLevel === undefined &&
+        priority === undefined &&
         blockId === undefined
       ) {
         continue;
@@ -160,7 +160,7 @@ export class RoadmapParser {
         startDate,
         dueDate,
         durationBuffer: 1.3,
-        energyLevel: energyLevel ?? 'medium',
+        priority: priority ?? 'medium',
         status: marker === ' ' ? 'todo' : 'done',
         dependsOn: [],
         hardDependency: false,
@@ -260,10 +260,10 @@ function readDateProperty(taskBody: string, pattern: RegExp): string | undefined
   return value !== undefined && dateIsValid(value) ? value : undefined;
 }
 
-function readEnergyProperty(taskBody: string): EnergyLevel | undefined {
-  const value = ENERGY_PROPERTY_PATTERN.exec(taskBody)?.[1]?.trim();
-  return value !== undefined && ENERGY_LEVELS.includes(value as EnergyLevel)
-    ? (value as EnergyLevel)
+function readPriorityProperty(taskBody: string): Priority | undefined {
+  const value = PRIORITY_PROPERTY_PATTERN.exec(taskBody)?.[1]?.trim();
+  return value !== undefined && PRIORITIES.includes(value as Priority)
+    ? (value as Priority)
     : undefined;
 }
 

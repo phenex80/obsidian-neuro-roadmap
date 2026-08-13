@@ -6,11 +6,9 @@
 
   let {
     nodes,
-    isInactive,
     onEdit,
   }: {
     nodes: readonly RoadmapNode[];
-    isInactive: (path: string) => boolean;
     onEdit: (node: RoadmapNode) => void;
   } = $props();
 
@@ -76,17 +74,16 @@
           {#each columns[column] as node (node.id)}
             <button
               type="button"
-              class={`roadmap-card energy-${node.energyLevel}`}
-              class:inactive={isInactive(node.path)}
+              class="roadmap-card"
               title={node.path}
               ondblclick={() => onEdit(node)}
               onkeydown={(event) => onCardKeyDown(event, node)}
             >
               <span class="card-title">{node.title || node.path.split('/').pop()?.replace('.md', '') || 'Neznáma úloha'}</span>
               <span class="metadata-row">
-                <span class="metadata-badge">{formatLabel(node.status)}</span>
-                <span class={`metadata-badge energy-badge energy-${node.energyLevel}`}>
-                  {formatLabel(node.energyLevel)} energy
+                <span class={`metadata-badge status-badge status-${node.status}`}>{formatLabel(node.status)}</span>
+                <span class={`metadata-badge priority-badge priority-${node.priority}`}>
+                  {formatLabel(node.priority)} priority
                 </span>
               </span>
             </button>
@@ -187,21 +184,34 @@
     font-size: var(--font-ui-smaller);
   }
 
-  .energy-badge.energy-low {
-    opacity: 0.7;
+  .status-badge.status-todo {
+    background: var(--status-todo);
+    color: white;
   }
 
-  .energy-badge.energy-medium {
-    opacity: 0.85;
+  .status-badge.status-in-progress {
+    background: var(--status-in-progress);
+    color: white;
   }
 
-  .energy-badge.energy-high {
-    border-color: var(--interactive-accent);
+  .status-badge.status-done {
+    background: var(--status-done);
+    color: white;
+  }
+
+  .priority-badge.priority-high {
+    background: var(--priority-high);
+    color: white;
+  }
+
+  .priority-badge.priority-medium {
+    background: var(--priority-medium);
+    color: white;
+  }
+
+  .priority-badge.priority-low {
+    background: var(--priority-low);
     color: var(--text-normal);
-  }
-
-  .roadmap-card.inactive {
-    opacity: var(--dimmed);
   }
 
   .column-empty {

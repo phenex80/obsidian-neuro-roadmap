@@ -18,12 +18,13 @@
   let nodes = $state<readonly RoadmapNode[]>([]);
   let semester = $state('all');
   let selectedSubjects = $state<string[]>([]);
-  let energyLevel = $state<'all' | 'low' | 'medium' | 'high'>('all');
+  let priority = $state<'all' | 'high' | 'medium' | 'low'>('all');
   let viewMode = $state<'gantt' | 'horizon'>('gantt');
-  let focusMode = $state(false);
+  let scale = $state<'days' | 'weeks' | 'months'>('days');
   let scratchpadNode = $state<RoadmapNode | null>(null);
   let circularDependencyCycles = $state<readonly (readonly string[])[]>([]);
-  const ENERGY_FILTERS = ['all', 'low', 'medium', 'high'] as const;
+  const PRIORITY_FILTERS = ['all', 'high', 'medium', 'low'] as const;
+  const TIMELINE_SCALES = ['days', 'weeks', 'months'] as const;
 
   let semesters = $derived(
     Array.from(
@@ -49,13 +50,8 @@
         (semester === 'all' || node.semester === semester) &&
         (selectedSubjects.length === 0 ||
           (node.subject !== undefined && selectedSubjects.includes(node.subject))) &&
-        (energyLevel === 'all' || node.energyLevel === energyLevel),
+        (priority === 'all' || node.priority === priority),
     ),
-  );
-  let activePaths = $derived(
-    focusMode
-      ? new Set(filteredNodes.filter((node) => node.status === 'in-progress').map((node) => node.path))
-      : null,
   );
 
   onMount(() =>
@@ -64,10 +60,6 @@
       circularDependencyCycles = indexer.getCircularDependencyCycles();
     }),
   );
-
-  function isInactive(path: string): boolean {
-    return activePaths !== null && !activePaths.has(path);
-  }
 
   function openScratchpad(node: RoadmapNode): void {
     scratchpadNode = node;
@@ -129,15 +121,30 @@
     </details>
 
     <div class="control-group">
-      <span class="control-label">Energy</span>
-      <div class="segmented-control" aria-label="Energy level filter">
-        {#each ENERGY_FILTERS as level (level)}
+      <span class="control-label">Priority</span>
+      <div class="segmented-control" aria-label="Priority filter">
+        {#each PRIORITY_FILTERS as level (level)}
           <button
-            class:active={energyLevel === level}
-            aria-pressed={energyLevel === level}
-            onclick={() => (energyLevel = level)}
+            class:active={priority === level}
+            aria-pressed={priority === level}
+            onclick={() => (priority = level)}
           >
             {level === 'all' ? 'All' : level.charAt(0).toUpperCase() + level.slice(1)}
+          </button>
+        {/each}
+      </div>
+    </div>
+
+    <div class="control-group">
+      <span class="control-label">Scale</span>
+      <div class="segmented-control" aria-label="Timeline scale">
+        {#each TIMELINE_SCALES as timelineScale (timelineScale)}
+          <button
+            class:active={scale === timelineScale}
+            aria-pressed={scale === timelineScale}
+            onclick={() => (scale = timelineScale)}
+          >
+            {timelineScale.charAt(0).toUpperCase() + timelineScale.slice(1)}
           </button>
         {/each}
       </div>
@@ -155,9 +162,6 @@
       </div>
     </div>
 
-    <button class="focus-toggle" class:active={focusMode} aria-pressed={focusMode} onclick={() => (focusMode = !focusMode)}>
-      Focus mode
-    </button>
   </header>
 
   <div class="notice-slot">
@@ -169,17 +173,17 @@
       {#if viewMode === 'gantt'}
         <GanttCanvas
           nodes={filteredNodes}
-          {isInactive}
+          {scale}
           onReschedule={(node, startDate, dueDate) => scheduler.rescheduleNode(node, startDate, dueDate)}
           onSchedule={(node, startDate, dueDate) => scheduler.scheduleUnscheduledNode(node, startDate, dueDate)}
           onCreate={(startDate, dueDate) => scheduler.createNode(startDate, dueDate)}
           onEdit={openScratchpad}
         />
       {:else}
-        <HorizonBoard nodes={filteredNodes} {isInactive} onEdit={openScratchpad} />
+        <HorizonBoard nodes={filteredNodes} onEdit={openScratchpad} />
       {/if}
     </div>
-    <UnscheduledDrawer nodes={filteredNodes} {isInactive} onEdit={openScratchpad} />
+    <UnscheduledDrawer nodes={filteredNodes} onEdit={openScratchpad} />
   </div>
 </main>
 
@@ -193,6 +197,15 @@
 {/if}
 
 <style>
+  :global(:root) {
+    --status-todo: #579bfc;
+    --status-in-progress: #fdab3d;
+    --status-done: #00c875;
+    --priority-high: #e2445c;
+    --priority-medium: #fdab3d;
+    --priority-low: #c4c4c4;
+  }
+
   .roadmap-workspace {
     display: grid;
     align-content: start;
@@ -229,8 +242,7 @@
   }
 
   select,
-  .subject-control summary,
-  .focus-toggle {
+  .subject-control summary {
     min-height: var(--input-height);
     padding-inline: var(--size-4-2);
     border: var(--border-width) solid var(--border-color);
@@ -332,8 +344,7 @@
     background: var(--background-secondary);
   }
 
-  .segmented-control button,
-  .focus-toggle {
+  .segmented-control button {
     border: var(--border-width) solid var(--border-color);
     border-radius: var(--radius-l);
     font: inherit;
@@ -346,14 +357,12 @@
     color: var(--text-muted);
   }
 
-  .segmented-control button:hover,
-  .focus-toggle:hover {
+  .segmented-control button:hover {
     color: var(--text-normal);
     background: var(--background-modifier-hover);
   }
 
-  .segmented-control button.active,
-  .focus-toggle.active {
+  .segmented-control button.active {
     border-color: var(--interactive-accent);
     background: var(--background-primary-alt);
     color: var(--text-normal);

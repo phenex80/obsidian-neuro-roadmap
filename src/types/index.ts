@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const NODE_TYPES = ['project', 'milestone', 'task'] as const;
-export const ENERGY_LEVELS = ['low', 'medium', 'high'] as const;
+export const PRIORITIES = ['high', 'medium', 'low'] as const;
 export const NODE_STATUSES = ['todo', 'in-progress', 'done', 'unscheduled'] as const;
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -40,7 +40,7 @@ export const roadmapNodeFrontmatterSchema = z.object({
   start_date: dateStringSchema.optional(),
   due_date: dateStringSchema.optional(),
   duration_buffer: z.number().finite().positive().default(1.3),
-  energy_level: z.enum(ENERGY_LEVELS).default('medium'),
+  priority: z.enum(PRIORITIES).default('medium'),
   status: z.enum(NODE_STATUSES).default('todo'),
   parent: wikilinkSchema.optional(),
   depends_on: z.array(wikilinkSchema).default([]),
@@ -53,17 +53,17 @@ export const inlineTaskSchema = z.object({
   subject: wikilinkSchema.optional(),
   start: dateStringSchema.optional(),
   due: dateStringSchema.optional(),
-  energy: z.enum(ENERGY_LEVELS).default('medium'),
+  priority: z.enum(PRIORITIES).default('medium'),
   blockId: z.string().trim().min(1).optional(),
 });
 
 export const roadmapSettingsSchema = z.object({
   defaultDurationBuffer: z.number().finite().positive().default(1.3),
-  defaultEnergyLevel: z.enum(ENERGY_LEVELS).default('medium'),
+  defaultPriority: z.enum(PRIORITIES).default('medium'),
 });
 
 export type NodeType = z.infer<typeof roadmapNodeFrontmatterSchema>['type'];
-export type EnergyLevel = z.infer<typeof roadmapNodeFrontmatterSchema>['energy_level'];
+export type Priority = z.infer<typeof roadmapNodeFrontmatterSchema>['priority'];
 export type NodeStatus = z.infer<typeof roadmapNodeFrontmatterSchema>['status'];
 export type RoadmapNodeFrontmatter = z.infer<typeof roadmapNodeFrontmatterSchema>;
 export type InlineTask = z.infer<typeof inlineTaskSchema>;
@@ -79,7 +79,7 @@ export interface RoadmapNode {
   startDate?: string;
   dueDate?: string;
   durationBuffer: number;
-  energyLevel: EnergyLevel;
+  priority: Priority;
   status: NodeStatus;
   parent?: string;
   dependsOn: readonly string[];

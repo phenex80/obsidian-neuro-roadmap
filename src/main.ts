@@ -1,7 +1,7 @@
 import { App, Plugin, PluginSettingTab, Setting } from 'obsidian';
 import {
-  ENERGY_LEVELS,
-  type EnergyLevel,
+  PRIORITIES,
+  type Priority,
   roadmapSettingsSchema,
   type RoadmapSettings,
 } from './types';
@@ -91,28 +91,28 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName('Default energy level')
-      .setDesc('Energy level assigned to roadmap nodes when none is defined in Markdown.')
+      .setName('Default priority')
+      .setDesc('Priority assigned to roadmap nodes when none is defined in Markdown.')
       .addDropdown((dropdown) => {
-        for (const energyLevel of ENERGY_LEVELS) {
-          dropdown.addOption(energyLevel, this.formatEnergyLevel(energyLevel));
+        for (const priority of PRIORITIES) {
+          dropdown.addOption(priority, this.formatPriority(priority));
         }
 
         dropdown
-          .setValue(this.plugin.settings.defaultEnergyLevel)
+          .setValue(this.plugin.settings.defaultPriority)
           .onChange(async (value) => {
-            const parsedEnergyLevel = ENERGY_LEVELS.find((energyLevel) => energyLevel === value);
-            if (parsedEnergyLevel === undefined) {
+            const parsedPriority = PRIORITIES.find((priority) => priority === value);
+            if (parsedPriority === undefined) {
               return;
             }
 
-            this.plugin.settings.defaultEnergyLevel = parsedEnergyLevel;
+            this.plugin.settings.defaultPriority = parsedPriority;
             await this.plugin.saveSettings();
           });
       });
   }
 
-  private formatEnergyLevel(energyLevel: EnergyLevel): string {
-    return `${energyLevel.charAt(0).toUpperCase()}${energyLevel.slice(1)}`;
+  private formatPriority(priority: Priority): string {
+    return `${priority.charAt(0).toUpperCase()}${priority.slice(1)}`;
   }
 }

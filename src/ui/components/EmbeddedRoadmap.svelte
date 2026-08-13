@@ -42,7 +42,7 @@
   {:else if config.mode === 'gantt'}
     <ol class:compact={config.view === 'compact'} class="timeline-list">
       {#each scheduledNodes as node (node.id)}
-        <li class={`energy-${node.energyLevel}`}>
+        <li class={`status-${node.status} priority-${node.priority}`}>
           <strong>{node.title}</strong>
           <span>{node.startDate} → {node.dueDate} · {node.durationBuffer}× buffer</span>
         </li>
@@ -56,7 +56,7 @@
       <section>
         <h4>Now</h4>
         {#each scopedNodes.filter((node) => node.status === 'in-progress').slice(0, 3) as node (node.id)}
-          <p class={`energy-${node.energyLevel}`}>{node.title}</p>
+          <p class={`status-${node.status} priority-${node.priority}`}>{node.title}</p>
         {:else}
           <p class="empty-column">Nothing active.</p>
         {/each}
@@ -64,7 +64,7 @@
       <section>
         <h4>Next</h4>
         {#each scopedNodes.filter((node) => node.status === 'todo' && node.dueDate !== undefined) as node (node.id)}
-          <p class={`energy-${node.energyLevel}`}>{node.title}</p>
+          <p class={`status-${node.status} priority-${node.priority}`}>{node.title}</p>
         {:else}
           <p class="empty-column">Nothing scheduled.</p>
         {/each}
@@ -72,7 +72,7 @@
       <section>
         <h4>Later</h4>
         {#each unscheduledNodes as node (node.id)}
-          <p class={`energy-${node.energyLevel}`}>{node.title}</p>
+          <p class={`status-${node.status} priority-${node.priority}`}>{node.title}</p>
         {:else}
           <p class="empty-column">No backlog items.</p>
         {/each}
@@ -128,16 +128,28 @@
     padding: var(--size-2-2);
   }
 
-  .energy-low {
-    opacity: 0.7;
+  .priority-low {
+    opacity: var(--dimmed);
   }
 
-  .energy-medium {
+  .priority-medium {
     opacity: 0.85;
   }
 
-  .energy-high {
+  .priority-high {
     border-left-color: var(--interactive-accent);
+  }
+
+  .status-todo {
+    border-left-color: var(--status-todo);
+  }
+
+  .status-in-progress {
+    border-left-color: var(--status-in-progress);
+  }
+
+  .status-done {
+    border-left-color: var(--status-done);
   }
 
   .horizon-list {
@@ -167,16 +179,28 @@
     border-left: var(--border-width) solid var(--border-color);
   }
 
-  .horizon-list p.energy-low {
-    opacity: 0.7;
+  .horizon-list p.priority-low {
+    opacity: var(--dimmed);
   }
 
-  .horizon-list p.energy-medium {
+  .horizon-list p.priority-medium {
     opacity: 0.85;
   }
 
-  .horizon-list p.energy-high {
+  .horizon-list p.priority-high {
     border-left-color: var(--interactive-accent);
+  }
+
+  .horizon-list p.status-todo {
+    border-left-color: var(--status-todo);
+  }
+
+  .horizon-list p.status-in-progress {
+    border-left-color: var(--status-in-progress);
+  }
+
+  .horizon-list p.status-done {
+    border-left-color: var(--status-done);
   }
 
   .horizon-list.compact {
