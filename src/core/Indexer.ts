@@ -75,6 +75,48 @@ export class RoadmapIndexer {
       .map(cloneNode);
   }
 
+  /** Returns every dependency cycle as node ID paths without mutating the graph. */
+  getCircularDependencyCycles(): readonly (readonly string[])[] {
+    const cycles: string[][] = [];
+    const visited = new Set<string>();
+    const activePath: string[] = [];
+    const activeNodes = new Set<string>();
+    const recordedCycles = new Set<string>();
+
+    const visit = (nodeId: string): void => {
+      if (activeNodes.has(nodeId)) {
+        const cycleStart = activePath.indexOf(nodeId);
+        const cycle = [...activePath.slice(cycleStart), nodeId];
+        const identity = canonicalCycleIdentity(cycle);
+        if (!recordedCycles.has(identity)) {
+          recordedCycles.add(identity);
+          cycles.push(cycle);
+        }
+        return;
+      }
+      if (visited.has(nodeId)) {
+        return;
+      }
+
+      visited.add(nodeId);
+      activeNodes.add(nodeId);
+      activePath.push(nodeId);
+      for (const dependencyId of this.dependenciesByNodeId.get(nodeId) ?? []) {
+        if (this.nodesById.has(dependencyId)) {
+          visit(dependencyId);
+        }
+      }
+      activePath.pop();
+      activeNodes.delete(nodeId);
+    };
+
+    for (const nodeId of this.nodesById.keys()) {
+      visit(nodeId);
+    }
+
+    return cycles.map((cycle) => [...cycle]);
+  }
+
   subscribe(listener: RoadmapIndexListener): () => void {
     this.listeners.add(listener);
     listener(this.getNodes());
@@ -229,4 +271,9 @@ function cloneNode(node: RoadmapNode): RoadmapNode {
     ...node,
     dependsOn: [...node.dependsOn],
   };
+}
+
+function canonicalCycleIdentity(cycle: readonly string[]): string {
+  const members = cycle.slice(0, -1).sort();
+  return members.join('\u0000');
 }

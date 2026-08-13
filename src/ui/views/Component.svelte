@@ -8,6 +8,7 @@
   import HorizonBoard from '../components/HorizonBoard.svelte';
   import UnscheduledDrawer from '../components/UnscheduledDrawer.svelte';
   import ScratchpadPopover from '../components/ScratchpadPopover.svelte';
+  import CircularDependencyAlert from '../components/CircularDependencyAlert.svelte';
 
   let {
     app,
@@ -20,6 +21,7 @@
   let viewMode = $state<'gantt' | 'horizon'>('gantt');
   let focusMode = $state(false);
   let scratchpadNode = $state<RoadmapNode | null>(null);
+  let circularDependencyCycles = $state<readonly (readonly string[])[]>([]);
   const ENERGY_FILTERS = ['all', 'low', 'medium', 'high'] as const;
 
   let semesters = $derived(
@@ -44,7 +46,12 @@
       : null,
   );
 
-  onMount(() => indexer.subscribe((updatedNodes) => (nodes = updatedNodes)));
+  onMount(() =>
+    indexer.subscribe((updatedNodes) => {
+      nodes = updatedNodes;
+      circularDependencyCycles = indexer.getCircularDependencyCycles();
+    }),
+  );
 
   function isInactive(path: string): boolean {
     return activePaths !== null && !activePaths.has(path);
@@ -107,6 +114,8 @@
       · non-active tasks are dimmed
     {/if}
   </p>
+
+  <CircularDependencyAlert cycles={circularDependencyCycles} />
 
   <div class="roadmap-layout">
     <div class="main-panel">

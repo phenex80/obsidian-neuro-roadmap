@@ -8,6 +8,7 @@ import {
 import { RoadmapIndexer } from './core/Indexer';
 import { RoadmapScheduler } from './core/RoadmapScheduler';
 import { GlobalItemView, VIEW_TYPE_NEURO_ROADMAP } from './ui/views/GlobalItemView';
+import { registerRoadmapCodeblockProcessor } from './ui/processors/CodeblockProcessor';
 
 const DEFAULT_SETTINGS: RoadmapSettings = roadmapSettingsSchema.parse({});
 
@@ -21,6 +22,7 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     await this.indexer.initialize();
     this.indexer.registerEvents((eventRef) => this.registerEvent(eventRef));
     this.registerView(VIEW_TYPE_NEURO_ROADMAP, (leaf) => new GlobalItemView(leaf, this));
+    registerRoadmapCodeblockProcessor(this, this.app, this.indexer);
     this.addRibbonIcon('git-branch', 'Open Neuro-Adaptive Roadmap', () => {
       void this.activateRoadmapView();
     });
