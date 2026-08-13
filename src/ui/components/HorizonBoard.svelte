@@ -82,7 +82,7 @@
               ondblclick={() => onEdit(node)}
               onkeydown={(event) => onCardKeyDown(event, node)}
             >
-              <span class="card-title">{node.title}</span>
+              <span class="card-title">{node.title || node.path.split('/').pop()?.replace('.md', '') || 'Neznáma úloha'}</span>
               <span class="metadata-row">
                 <span class="metadata-badge">{formatLabel(node.status)}</span>
                 <span class={`metadata-badge energy-badge energy-${node.energyLevel}`}>

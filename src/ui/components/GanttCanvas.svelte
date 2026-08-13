@@ -420,10 +420,10 @@
     margin-inline: var(--size-2-1);
     padding-inline: var(--size-4-3);
     overflow: hidden;
-    border: var(--border-width) solid var(--border-color);
+    border: 1px solid var(--background-modifier-border);
     border-radius: var(--radius-l);
-    background: var(--interactive-normal);
-    color: var(--text-normal);
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
     font-size: var(--font-ui-small);
     box-shadow: var(--shadow-s);
     cursor: grab;
@@ -451,10 +451,6 @@
   .timeline-pill.energy-high,
   .timeline-pill.hard-dependency {
     border-color: var(--interactive-accent);
-  }
-
-  .timeline-pill.soft-dependency {
-    border-style: dashed;
   }
 
   .inactive {
