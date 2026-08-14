@@ -22,13 +22,13 @@ const ROADMAP_FRONTMATTER_KEYS = new Set([
   'depends_on',
   'hard_dependency',
 ]);
-const INLINE_TASK_PATTERN = /^\s*[-*+]\s+\[([^\]])\]\s+(.+?)\s*$/;
+const INLINE_TASK_PATTERN = /^\s*[-*+]\s+\[[^\]]\]\s*(.*?)\s*$/;
 const SUBJECT_PROPERTY_PATTERN = /\[subject::\s*(\[\[[^\]]+\]\])\s*\]/;
 const START_PROPERTY_PATTERN = /\[start::\s*([^\]]+?)\s*\]/;
 const DUE_PROPERTY_PATTERN = /\[due::\s*([^\]]+?)\s*\]/;
 const PRIORITY_PROPERTY_PATTERN = /\[priority::\s*([^\]]+?)\s*\]/;
 const INLINE_PROPERTY_PATTERN =
-  /\[(?:subject|start|due|priority)::\s*(?:\[\[[^\]]+\]\]|[^\]]+?)\s*\]/g;
+  /\[[^[\]:\r\n]+::\s*(?:\[\[[^\]]+\]\]|[^\]]*?)\]/gu;
 const BLOCK_ID_PATTERN = /\s+\^([A-Za-z0-9-]+)\s*$/;
 
 type FrontmatterValues = Record<string, unknown>;
@@ -66,20 +66,23 @@ export class RoadmapParser {
       return [];
     }
 
+    const inheritedSubject =
+      frontmatter === null ? undefined : this.extractSubject(frontmatter, file);
     const nodes: RoadmapNode[] = [];
-    const frontmatterNode = this.parseFrontmatterNode(file, frontmatter);
+    const frontmatterNode = this.parseFrontmatterNode(file, frontmatter, inheritedSubject);
 
     if (frontmatterNode !== null) {
       nodes.push(frontmatterNode);
     }
 
-    nodes.push(...this.parseInlineTasks(file, cache, source));
+    nodes.push(...this.parseInlineTasks(file, cache, source, inheritedSubject));
     return nodes;
   }
 
   private parseFrontmatterNode(
     file: TFile,
     values: FrontmatterValues | null,
+    subject: string | undefined,
   ): RoadmapNode | null {
     if (
       values === null ||
@@ -116,7 +119,7 @@ export class RoadmapParser {
       title: data.title ?? file.basename,
       type: data.type,
       semester: data.semester,
-      subject: this.extractSubject(values, file),
+      subject,
       startDate,
       dueDate,
       durationBuffer: data.duration_buffer,
@@ -161,9 +164,14 @@ export class RoadmapParser {
     return undefined;
   }
 
-  private parseInlineTasks(file: TFile, cache: CachedMetadata, source: string): RoadmapNode[] {
+  private parseInlineTasks(
+    file: TFile,
+    cache: CachedMetadata,
+    source: string,
+    inheritedSubject: string | undefined,
+  ): RoadmapNode[] {
     const lines = source.split(/\r?\n/u);
-    const tasks = cache.listItems?.filter((item) => item.task !== undefined) ?? [];
+    const tasks = cache.listItems?.filter((item) => item.task === ' ') ?? [];
     const nodes: RoadmapNode[] = [];
 
     for (const task of tasks) {
@@ -178,9 +186,8 @@ export class RoadmapParser {
         continue;
       }
 
-      const marker = matchedTask[1];
-      const taskBody = matchedTask[2];
-      if (marker === undefined || taskBody === undefined) {
+      const taskBody = matchedTask[1];
+      if (taskBody === undefined) {
         continue;
       }
 
@@ -191,19 +198,10 @@ export class RoadmapParser {
       const matchedBlockId = BLOCK_ID_PATTERN.exec(taskBody);
       const blockId = task.id ?? matchedBlockId?.[1];
 
-      if (
-        subject === undefined &&
-        startDate === undefined &&
-        dueDate === undefined &&
-        priority === undefined &&
-        blockId === undefined
-      ) {
-        continue;
-      }
-
       const title = taskBody
         .replace(INLINE_PROPERTY_PATTERN, '')
         .replace(BLOCK_ID_PATTERN, '')
+        .replace(/\s+/gu, ' ')
         .trim();
       if (title.length === 0) {
         continue;
@@ -215,12 +213,12 @@ export class RoadmapParser {
         path: file.path,
         title,
         type: 'task',
-        subject: this.resolveWikilink(subject, file),
+        subject: this.resolveWikilink(subject, file) ?? inheritedSubject,
         startDate,
         dueDate,
         durationBuffer: 1.3,
         priority: priority ?? 'medium',
-        status: marker === ' ' ? 'todo' : 'done',
+        status: startDate !== undefined && dueDate !== undefined ? 'todo' : 'unscheduled',
         dependsOn: [],
         hardDependency: false,
         source: 'inline',

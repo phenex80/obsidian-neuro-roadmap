@@ -6,7 +6,7 @@ export type RoadmapIndexListener = (nodes: readonly RoadmapNode[]) => void;
 
 /**
  * Maintains an in-memory roadmap graph from Obsidian's metadata cache.
- * File contents are read only from Vault's cache when inline task lines are present.
+ * File contents are read only from Vault's cache when incomplete inline task lines are present.
  */
 export class RoadmapIndexer {
   private readonly parser: RoadmapParser;
@@ -169,8 +169,8 @@ export class RoadmapIndexer {
   }
 
   private async readSourceForInlineTasks(file: TFile, cache: CachedMetadata): Promise<string> {
-    const containsTask = cache.listItems?.some((item) => item.task !== undefined) ?? false;
-    if (!containsTask) {
+    const containsIncompleteTask = cache.listItems?.some((item) => item.task === ' ') ?? false;
+    if (!containsIncompleteTask) {
       return '';
     }
 
