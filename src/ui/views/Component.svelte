@@ -123,6 +123,21 @@
 
 <main class="roadmap-workspace">
   <header class="app-header">
+    <div class="control-group view-control">
+      <span class="control-label">View</span>
+      <div class="segmented-control" aria-label="Roadmap view mode">
+        <button class:active={viewMode === 'dashboard'} aria-pressed={viewMode === 'dashboard'} onclick={() => (viewMode = 'dashboard')}>
+          Dashboard
+        </button>
+        <button class:active={viewMode === 'gantt'} aria-pressed={viewMode === 'gantt'} onclick={() => (viewMode = 'gantt')}>
+          Gantt
+        </button>
+        <button class:active={viewMode === 'horizon'} aria-pressed={viewMode === 'horizon'} onclick={() => (viewMode = 'horizon')}>
+          Horizon
+        </button>
+      </div>
+    </div>
+
     <label class="select-control">
       <span class="control-label">Semester</span>
       <select bind:value={semester} aria-label="Semester filter">
@@ -185,21 +200,6 @@
             {timelineScale.charAt(0).toUpperCase() + timelineScale.slice(1)}
           </button>
         {/each}
-      </div>
-    </div>
-
-    <div class="control-group view-control">
-      <span class="control-label">View</span>
-      <div class="segmented-control" aria-label="Roadmap view mode">
-        <button class:active={viewMode === 'dashboard'} aria-pressed={viewMode === 'dashboard'} onclick={() => (viewMode = 'dashboard')}>
-          Dashboard
-        </button>
-        <button class:active={viewMode === 'gantt'} aria-pressed={viewMode === 'gantt'} onclick={() => (viewMode = 'gantt')}>
-          Gantt
-        </button>
-        <button class:active={viewMode === 'horizon'} aria-pressed={viewMode === 'horizon'} onclick={() => (viewMode = 'horizon')}>
-          Horizon
-        </button>
       </div>
     </div>
 
@@ -268,7 +268,8 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: var(--size-4-2);
+    justify-content: flex-start !important;
+    gap: 12px;
     padding: var(--size-4-2) var(--size-4-3);
     border-bottom: var(--border-width) solid var(--border-color);
     background: var(--background-primary);
@@ -416,7 +417,7 @@
   }
 
   .view-control {
-    margin-inline-start: auto;
+    margin-inline-start: 0;
   }
 
   .export-button {
