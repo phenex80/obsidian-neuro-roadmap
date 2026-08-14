@@ -31,6 +31,12 @@ semester: 1. semester
 
 Real templates can be excluded through mapped Type values such as `template` or `šablóna`.
 
+## Roadmap source scope
+
+By default, the plugin indexes tasks from all Markdown files for backward compatibility. **Roadmap source scope** can opt into a stricter mode where a document must match at least one YAML property/value rule before its frontmatter or checkbox tasks enter the shared roadmap dataset. For example, a rule for `typ` with values `predmet, projekt, roadmapa, prednáška` keeps study notes in scope without turning those document types into task nodes.
+
+**Excluded folders / paths** remain a hard exclusion and always take precedence over source rules. This is useful for template folders and system areas that must never be indexed.
+
 ## Semantic property mapping
 
 Settings → Neuro Roadmap → **Property mapping** accepts multiple YAML keys for every canonical field. Defaults cover common English and Slovak conventions, including:
@@ -47,7 +53,7 @@ Status, priority, and node-type values have independent alias mappings. Existing
 The plugin includes ready-to-use defaults for:
 
 - semantic property and value mappings;
-- template exclusion;
+- template, path, and optional source-scope filtering;
 - duration buffer and priority;
 - Horizon Next/critical windows and overdue preview limit;
 - color coding plus configurable Todo, In Progress, Done, Overdue, and priority colors.

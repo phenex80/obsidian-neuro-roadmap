@@ -3,6 +3,7 @@ import { z } from 'zod';
 export const NODE_TYPES = ['roadmap', 'project', 'milestone', 'task'] as const;
 export const PRIORITIES = ['high', 'medium', 'low'] as const;
 export const NODE_STATUSES = ['todo', 'in-progress', 'done', 'unscheduled'] as const;
+export const SOURCE_SCOPE_MODES = ['all', 'rules'] as const;
 
 export const CANONICAL_PROPERTY_FIELDS = [
   'title',
@@ -123,6 +124,11 @@ export const colorSettingsSchema = z.object({
   priorityLow: colorValueSchema.default('#c4c4c4'),
 });
 
+export const sourceScopeRuleSchema = z.object({
+  property: z.string().default(''),
+  acceptedValues: z.string().default(''),
+});
+
 export const roadmapSettingsSchema = z.object({
   defaultDurationBuffer: z.number().finite().positive().default(1.3),
   defaultPriority: z.enum(PRIORITIES).default('medium'),
@@ -131,6 +137,8 @@ export const roadmapSettingsSchema = z.object({
   valueMappings: semanticValueMappingSchema.default({}),
   excludedTemplateValues: z.string().default('template, šablóna, sablona'),
   excludedPathPrefixes: z.string().default(''),
+  sourceScopeMode: z.enum(SOURCE_SCOPE_MODES).default('all'),
+  sourceScopeRules: z.array(sourceScopeRuleSchema).default([]),
   horizonNextDays: z.number().int().min(1).max(90).default(7),
   horizonCriticalDays: z.number().int().min(0).max(30).default(0),
   horizonOverduePreviewLimit: z.number().int().min(1).max(50).default(5),
@@ -140,10 +148,12 @@ export const roadmapSettingsSchema = z.object({
 export type NodeType = (typeof NODE_TYPES)[number];
 export type Priority = (typeof PRIORITIES)[number];
 export type NodeStatus = (typeof NODE_STATUSES)[number];
+export type SourceScopeMode = (typeof SOURCE_SCOPE_MODES)[number];
 export type CanonicalPropertyField = (typeof CANONICAL_PROPERTY_FIELDS)[number];
 export type PropertyMappings = z.infer<typeof propertyMappingSchema>;
 export type SemanticValueMappings = z.infer<typeof semanticValueMappingSchema>;
 export type ColorSettings = z.infer<typeof colorSettingsSchema>;
+export type SourceScopeRule = z.infer<typeof sourceScopeRuleSchema>;
 export type RoadmapNodeFrontmatter = z.infer<typeof roadmapNodeFrontmatterSchema>;
 export type InlineTask = z.infer<typeof inlineTaskSchema>;
 export type RoadmapSettings = z.infer<typeof roadmapSettingsSchema>;

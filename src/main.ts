@@ -2,6 +2,7 @@ import { App, Modal, Plugin, PluginSettingTab, Setting } from 'obsidian';
 import {
   CANONICAL_PROPERTY_FIELDS,
   PRIORITIES,
+  SOURCE_SCOPE_MODES,
   propertyMappingSchema,
   roadmapSettingsSchema,
   type CanonicalPropertyField,
@@ -10,6 +11,7 @@ import {
   type PropertyMappings,
   type RoadmapSettings,
   type SemanticValueMappings,
+  type SourceScopeMode,
 } from './types';
 import { RoadmapIndexer } from './core/Indexer';
 import type { RoadmapParserOptions } from './core/Parser';
@@ -20,6 +22,7 @@ import {
   parseCommaSeparatedValues,
 } from './core/SemanticMapping';
 import { RoadmapScheduler } from './core/RoadmapScheduler';
+import { compileSourceScope, hasValidSourceScopeRules } from './core/SourceScope';
 import {
   migrateRoadmapSettingsData,
   withoutRoadmapTemplateValue,
@@ -119,6 +122,10 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
       semanticValues: compileSemanticValueMap(this.settings.valueMappings),
       excludedTemplateValues: parseCommaSeparatedValues(this.settings.excludedTemplateValues),
       excludedPathPrefixes: parsePathPrefixes(this.settings.excludedPathPrefixes),
+      sourceScope: compileSourceScope(
+        this.settings.sourceScopeMode,
+        this.settings.sourceScopeRules,
+      ),
       defaultDurationBuffer: this.settings.defaultDurationBuffer,
       defaultPriority: this.settings.defaultPriority,
     };
@@ -200,6 +207,7 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
         }),
       );
 
+    containerEl.createEl('h3', { text: 'Hard exclusions' });
     new Setting(containerEl)
       .setName('Excluded template values')
       .setDesc('Values of the mapped Type property that identify real templates. “roadmapa” is always treated as a valid roadmap note.')
@@ -215,7 +223,7 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Excluded folders / paths')
-      .setDesc('Comma- or newline-separated vault path prefixes ignored before parsing, including inline tasks.')
+      .setDesc('Hard exclusion: files under these vault paths are never indexed, even when they match source scope rules.')
       .addTextArea((text) =>
         text
           .setPlaceholder('40 Systém/Šablóny')
@@ -225,6 +233,33 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings(true);
           }),
       );
+
+    containerEl.createEl('h3', { text: 'Roadmap source scope' });
+    containerEl.createEl('p', {
+      text: 'Choose which remaining Markdown documents Neuro Roadmap indexes for tasks and roadmap data.',
+      cls: 'setting-item-description',
+    });
+
+    new Setting(containerEl)
+      .setName('Index documents')
+      .setDesc('All files preserves existing behavior. Rules mode indexes only documents matching at least one source rule.')
+      .addDropdown((dropdown) => {
+        dropdown.addOption('all', 'All Markdown files');
+        dropdown.addOption('rules', 'Only matching documents');
+        dropdown
+          .setValue(this.plugin.settings.sourceScopeMode)
+          .onChange(async (value) => {
+            if (isSourceScopeMode(value)) {
+              this.plugin.settings.sourceScopeMode = value;
+              await this.plugin.saveSettings(true);
+              this.display();
+            }
+          });
+      });
+
+    if (this.plugin.settings.sourceScopeMode === 'rules') {
+      this.addSourceScopeRules(containerEl);
+    }
 
     containerEl.createEl('h3', { text: 'Value mapping' });
     this.addValueMappingSettings(containerEl, this.plugin.settings.valueMappings);
@@ -335,6 +370,67 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
           }),
         );
     }
+  }
+
+  private addSourceScopeRules(containerEl: HTMLElement): void {
+    if (!hasValidSourceScopeRules(this.plugin.settings.sourceScopeRules)) {
+      new Setting(containerEl)
+        .setName('No valid source rules')
+        .setDesc('Rules mode intentionally produces an empty roadmap until a property and accepted value are provided.');
+    }
+
+    for (const [index, rule] of this.plugin.settings.sourceScopeRules.entries()) {
+      new Setting(containerEl)
+        .setName(`Source rule ${index + 1}`)
+        .setDesc('First field: YAML property. Second field: comma-separated accepted values. Matching is exact after normalization.')
+        .addText((text) => {
+          text
+            .setPlaceholder('Property, for example typ')
+            .setValue(rule.property)
+            .onChange(async (value) => {
+              const currentRule = this.plugin.settings.sourceScopeRules[index];
+              if (currentRule !== undefined) {
+                currentRule.property = value;
+                await this.plugin.saveSettings(true);
+              }
+            });
+          text.inputEl.setAttr('aria-label', `Source rule ${index + 1} property`);
+        })
+        .addText((text) => {
+          text
+            .setPlaceholder('Values, comma separated')
+            .setValue(rule.acceptedValues)
+            .onChange(async (value) => {
+              const currentRule = this.plugin.settings.sourceScopeRules[index];
+              if (currentRule !== undefined) {
+                currentRule.acceptedValues = value;
+                await this.plugin.saveSettings(true);
+              }
+            });
+          text.inputEl.setAttr('aria-label', `Source rule ${index + 1} accepted values`);
+        })
+        .addButton((button) =>
+          button
+            .setIcon('trash-2')
+            .setTooltip(`Remove source rule ${index + 1}`)
+            .onClick(async () => {
+              this.plugin.settings.sourceScopeRules.splice(index, 1);
+              await this.plugin.saveSettings(true);
+              this.display();
+            }),
+        );
+    }
+
+    new Setting(containerEl)
+      .setName('Source rules')
+      .setDesc('Rules use OR matching: a document is included when any rule matches.')
+      .addButton((button) =>
+        button.setButtonText('Add rule').onClick(async () => {
+          this.plugin.settings.sourceScopeRules.push({ property: '', acceptedValues: '' });
+          await this.plugin.saveSettings(true);
+          this.display();
+        }),
+      );
   }
 
   private addColorSettings(containerEl: HTMLElement, colors: ColorSettings): void {
@@ -484,4 +580,8 @@ function parsePathPrefixes(value: string): string[] {
     .split(/[,\n]/u)
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
+}
+
+function isSourceScopeMode(value: string): value is SourceScopeMode {
+  return SOURCE_SCOPE_MODES.some((mode) => mode === value);
 }

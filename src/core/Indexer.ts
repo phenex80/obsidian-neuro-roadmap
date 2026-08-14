@@ -1,4 +1,4 @@
-import { TFile, type App, type CachedMetadata, type EventRef, type TAbstractFile } from 'obsidian';
+import type { App, CachedMetadata, EventRef, TAbstractFile, TFile } from 'obsidian';
 import { RoadmapParser, type RoadmapParserOptions } from './Parser';
 import type { RoadmapNode } from '../types';
 
@@ -215,13 +215,13 @@ export class RoadmapIndexer {
   }
 
   private handleVaultDelete(file: TAbstractFile): void {
-    if (file instanceof TFile) {
+    if (isMarkdownFile(file)) {
       this.removePath(file.path);
     }
   }
 
   private handleVaultRename(file: TAbstractFile, oldPath: string): void {
-    if (!(file instanceof TFile)) {
+    if (!isMarkdownFile(file)) {
       return;
     }
 
@@ -308,4 +308,12 @@ function cloneNode(node: RoadmapNode): RoadmapNode {
 function canonicalCycleIdentity(cycle: readonly string[]): string {
   const members = cycle.slice(0, -1).sort();
   return members.join('\u0000');
+}
+
+function isMarkdownFile(file: TAbstractFile): file is TFile {
+  return (
+    'extension' in file &&
+    typeof file.extension === 'string' &&
+    file.extension.toLocaleLowerCase() === 'md'
+  );
 }

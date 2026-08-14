@@ -21,6 +21,11 @@ import {
   type PropertyKeyMap,
   type SemanticValueMap,
 } from './SemanticMapping';
+import {
+  compileSourceScope,
+  isFrontmatterInSourceScope,
+  type SourceScopeConfig,
+} from './SourceScope';
 
 const INLINE_TASK_PATTERN = /^\s*[-*+]\s+\[([^\]])\]\s*(.*?)\s*$/u;
 const INLINE_PROPERTY_PATTERN =
@@ -35,6 +40,7 @@ export interface RoadmapParserOptions {
   readonly semanticValues: SemanticValueMap;
   readonly excludedTemplateValues: readonly string[];
   readonly excludedPathPrefixes: readonly string[];
+  readonly sourceScope: SourceScopeConfig;
   readonly defaultDurationBuffer: number;
   readonly defaultPriority: Priority;
 }
@@ -45,6 +51,7 @@ export function createDefaultParserOptions(): RoadmapParserOptions {
     semanticValues: compileSemanticValueMap(semanticValueMappingSchema.parse({})),
     excludedTemplateValues: ['template', 'šablóna', 'sablona'],
     excludedPathPrefixes: [],
+    sourceScope: compileSourceScope('all', []),
     defaultDurationBuffer: 1.3,
     defaultPriority: 'medium',
   };
@@ -100,21 +107,24 @@ export class RoadmapParser {
     }
 
     const frontmatter = asRecord(cache.frontmatter);
-    if (frontmatter === null) {
-      return false;
+    if (frontmatter !== null) {
+      const typeEntry = readMappedValue(frontmatter, this.options.propertyKeys.type);
+      const mappedType = mapNodeType(typeEntry?.value, this.options.semanticValues);
+      if (mappedType !== 'roadmap') {
+        const excludedValues = new Set(
+          this.options.excludedTemplateValues.map(normalizeSemanticValue),
+        );
+        if (
+          readValueStrings(typeEntry?.value).some((value) =>
+            excludedValues.has(normalizeSemanticValue(value)),
+          )
+        ) {
+          return true;
+        }
+      }
     }
 
-    const typeEntry = readMappedValue(frontmatter, this.options.propertyKeys.type);
-    if (mapNodeType(typeEntry?.value, this.options.semanticValues) === 'roadmap') {
-      return false;
-    }
-
-    const excludedValues = new Set(
-      this.options.excludedTemplateValues.map(normalizeSemanticValue),
-    );
-    return readValueStrings(typeEntry?.value).some((value) =>
-      excludedValues.has(normalizeSemanticValue(value)),
-    );
+    return !isFrontmatterInSourceScope(frontmatter, this.options.sourceScope);
   }
 
   parseFile(file: TFile, cache: CachedMetadata, source: string): RoadmapNode[] {
@@ -504,6 +514,7 @@ function normalizeParserOptions(options: RoadmapParserOptions): RoadmapParserOpt
       (value) => normalizeSemanticValue(value) !== normalizeSemanticValue('roadmapa'),
     ),
     excludedPathPrefixes: uniqueNonEmptyValues(options.excludedPathPrefixes),
+    sourceScope: options.sourceScope,
     defaultDurationBuffer:
       Number.isFinite(options.defaultDurationBuffer) && options.defaultDurationBuffer > 0
         ? options.defaultDurationBuffer

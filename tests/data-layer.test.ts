@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { CachedMetadata, MetadataCache, TFile } from 'obsidian';
+import type { App, CachedMetadata, MetadataCache, TFile } from 'obsidian';
 import { RoadmapParser, createDefaultParserOptions, isCompletedTaskMarker } from '../src/core/Parser';
 import {
   compilePropertyKeyMap,
@@ -18,11 +18,15 @@ import {
 } from '../src/core/TimelineDomain';
 import type { RoadmapNode } from '../src/types';
 import { DependencyEngine } from '../src/core/DependencyEngine';
-import type { RoadmapIndexer } from '../src/core/Indexer';
+import { RoadmapIndexer } from '../src/core/Indexer';
 import { buildSubjectSummaries } from '../src/core/DashboardMetrics';
 import { classifyHorizon, formatRelativeTaskDate } from '../src/core/HorizonPlanner';
 import { migrateRoadmapSettingsData } from '../src/core/SettingsMigration';
 import { roadmapSettingsSchema } from '../src/types';
+import {
+  compileSourceScope,
+  isFrontmatterInSourceScope,
+} from '../src/core/SourceScope';
 
 const metadataCache = {
   getFirstLinkpathDest: () => null,
@@ -137,6 +141,227 @@ test('excluded path prefixes reject frontmatter nodes and inline tasks before pa
     ),
     [],
   );
+});
+
+test('all-files source scope preserves checkbox indexing from ordinary Markdown files', () => {
+  const parser = new RoadmapParser(metadataCache, createDefaultParserOptions());
+  const nodes = parser.parseFile(
+    createFile('40 Systém/Backup.md'),
+    createCache({ typ: 'systém' }, [{ line: 3, task: ' ' }]),
+    '---\ntyp: systém\n---\n- [ ] Je vytvorená záloha vaultu.',
+  );
+
+  assert.equal(nodes.length, 1);
+  assert.equal(nodes[0]?.source, 'inline');
+});
+
+test('rules source scope includes exact scalar and YAML list matches', () => {
+  const scope = compileSourceScope('rules', [
+    { property: 'typ', acceptedValues: 'predmet, projekt' },
+  ]);
+
+  assert.equal(isFrontmatterInSourceScope({ typ: 'predmet' }, scope), true);
+  assert.equal(isFrontmatterInSourceScope({ typ: 'projekt' }, scope), true);
+  assert.equal(isFrontmatterInSourceScope({ typ: ['niečo', 'predmet'] }, scope), true);
+  assert.equal(isFrontmatterInSourceScope({ typ: 'projektová dokumentácia' }, scope), false);
+  assert.equal(isFrontmatterInSourceScope({ typ: 'systém' }, scope), false);
+  assert.equal(isFrontmatterInSourceScope({ typ: 'zdroj' }, scope), false);
+  assert.equal(isFrontmatterInSourceScope({}, scope), false);
+  assert.equal(isFrontmatterInSourceScope(null, scope), false);
+});
+
+test('source rules use normalized property/value matching and ANY semantics', () => {
+  const scope = compileSourceScope('rules', [
+    { property: 'TÝP', acceptedValues: 'PREDMET' },
+    { property: 'area', acceptedValues: 'university' },
+  ]);
+
+  assert.equal(isFrontmatterInSourceScope({ typ: 'predmet' }, scope), true);
+  assert.equal(isFrontmatterInSourceScope({ category: 'other', AREA: 'University' }, scope), true);
+  assert.equal(isFrontmatterInSourceScope({ typ: 'zdroj', area: 'personal' }, scope), false);
+});
+
+test('rules mode indexes incomplete and completed tasks only from matching source documents', () => {
+  const parser = createRulesParser([
+    { property: 'typ', acceptedValues: 'predmet, projekt, roadmapa, prednáška' },
+  ]);
+  const source = [
+    '---',
+    'typ: prednáška',
+    'predmet: ISKB02',
+    '---',
+    '- [ ] Prečítať článok',
+    '- [x] Zapísať reflexiu',
+  ].join('\n');
+  const nodes = parser.parseFile(
+    createFile('10 Štúdium/ISKB02/Prednáška 1.md'),
+    createCache(
+      { typ: 'prednáška', predmet: 'ISKB02' },
+      [{ line: 4, task: ' ' }, { line: 5, task: 'x' }],
+    ),
+    source,
+  );
+
+  assert.equal(nodes.some((node) => node.source === 'frontmatter'), false);
+  assert.deepEqual(nodes.map((node) => node.status), ['unscheduled', 'done']);
+  assert.ok(nodes.every((node) => node.subject === 'ISKB02'));
+});
+
+test('rules mode rejects inline tasks from nonmatching and property-less source documents', () => {
+  const parser = createRulesParser([
+    { property: 'typ', acceptedValues: 'predmet, projekt' },
+  ]);
+  const cases = [
+    { path: '40 Systém/Backup.md', frontmatter: { typ: 'systém' } },
+    { path: '30 Zdroje/Kniha.md', frontmatter: { typ: 'zdroj' } },
+    { path: 'Notes/Plain.md', frontmatter: {} },
+  ];
+
+  for (const item of cases) {
+    const nodes = parser.parseFile(
+      createFile(item.path),
+      createCache(item.frontmatter, [{ line: 3, task: ' ' }]),
+      '---\ntyp: ignored\n---\n- [ ] Noise task',
+    );
+    assert.deepEqual(nodes, [], item.path);
+  }
+});
+
+test('matching explicit project source remains a project node', () => {
+  const parser = createRulesParser([
+    { property: 'typ', acceptedValues: 'predmet, projekt' },
+  ]);
+  const nodes = parser.parseFile(
+    createFile('20 Projekty/Web.md'),
+    createCache({ typ: 'projekt' }, []),
+    '',
+  );
+
+  assert.equal(nodes.length, 1);
+  assert.equal(nodes[0]?.type, 'project');
+  assert.equal(nodes[0]?.source, 'frontmatter');
+});
+
+test('source eligibility never promotes matching non-roadmap document types into task nodes', () => {
+  const parser = createRulesParser([
+    { property: 'typ', acceptedValues: 'predmet, prednáška' },
+  ]);
+
+  assert.deepEqual(
+    parser.parseFile(
+      createFile('Subjects/ISKB02.md'),
+      createCache({ typ: 'predmet' }, []),
+      '',
+    ),
+    [],
+  );
+  assert.deepEqual(
+    parser.parseFile(
+      createFile('Lectures/Lecture.md'),
+      createCache({ typ: 'prednáška', stav: 'prebieha' }, []),
+      '',
+    ),
+    [],
+  );
+});
+
+test('roadmap anchor semantics remain intact inside rules source scope', () => {
+  const parser = createRulesParser([
+    { property: 'typ', acceptedValues: 'roadmapa' },
+  ]);
+  const nodes = parser.parseFile(
+    createFile('10 Štúdium/ISKB02/00 Roadmap.md'),
+    createCache({ typ: 'roadmapa', predmet: 'ISKB02' }, [{ line: 4, task: ' ' }]),
+    '---\ntyp: roadmapa\npredmet: ISKB02\n---\n- [ ] Pripraviť plán skúšky',
+  );
+
+  assert.equal(nodes.length, 1);
+  assert.equal(nodes[0]?.source, 'inline');
+  assert.equal(nodes[0]?.subject, 'ISKB02');
+});
+
+test('hard path and template exclusions win over matching source rules', () => {
+  const options = {
+    ...createDefaultParserOptions(),
+    excludedPathPrefixes: ['40 Systém/Šablóny'],
+    sourceScope: compileSourceScope('rules', [
+      { property: 'typ', acceptedValues: 'projekt, šablóna' },
+    ]),
+  };
+  const parser = new RoadmapParser(metadataCache, options);
+  const taskSource = '---\ntyp: projekt\n---\n- [ ] Sample';
+
+  assert.deepEqual(
+    parser.parseFile(
+      createFile('40 Systém/Šablóny/Projekt.md'),
+      createCache({ typ: 'projekt' }, [{ line: 3, task: ' ' }]),
+      taskSource,
+    ),
+    [],
+  );
+  assert.deepEqual(
+    parser.parseFile(
+      createFile('Notes/Template.md'),
+      createCache({ typ: 'šablóna' }, [{ line: 3, task: ' ' }]),
+      '---\ntyp: šablóna\n---\n- [ ] Sample',
+    ),
+    [],
+  );
+});
+
+test('changing source scope options excludes previously accepted parser input', () => {
+  const parser = new RoadmapParser(metadataCache, createDefaultParserOptions());
+  const file = createFile('40 Systém/Backup.md');
+  const cache = createCache({ typ: 'systém' }, [{ line: 3, task: ' ' }]);
+  const source = '---\ntyp: systém\n---\n- [ ] Je vytvorená záloha vaultu.';
+  assert.equal(parser.parseFile(file, cache, source).length, 1);
+
+  parser.setOptions({
+    ...createDefaultParserOptions(),
+    sourceScope: compileSourceScope('rules', [
+      { property: 'typ', acceptedValues: 'predmet' },
+    ]),
+  });
+  assert.deepEqual(parser.parseFile(file, cache, source), []);
+});
+
+test('indexer rebuild removes stale out-of-scope nodes without reading excluded Markdown', async () => {
+  const file = {
+    ...createFile('40 Systém/Backup.md'),
+    extension: 'md',
+  } as TFile;
+  const cache = createCache({ typ: 'systém' }, [{ line: 3, task: ' ' }]);
+  const source = '---\ntyp: systém\n---\n- [ ] Je vytvorená záloha vaultu.';
+  let cachedReadCount = 0;
+  const app = {
+    metadataCache: {
+      getFileCache: () => cache,
+      getFirstLinkpathDest: () => null,
+    },
+    vault: {
+      getMarkdownFiles: () => [file],
+      cachedRead: async () => {
+        cachedReadCount += 1;
+        return source;
+      },
+    },
+  } as unknown as App;
+  const indexer = new RoadmapIndexer(app);
+
+  indexer.setParserOptions(createDefaultParserOptions());
+  await indexer.initialize();
+  assert.equal(indexer.getNodes().length, 1);
+  assert.equal(cachedReadCount, 1);
+
+  indexer.setParserOptions({
+    ...createDefaultParserOptions(),
+    sourceScope: compileSourceScope('rules', [
+      { property: 'typ', acceptedValues: 'predmet' },
+    ]),
+  });
+  await indexer.rebuild();
+  assert.deepEqual(indexer.getNodes(), []);
+  assert.equal(cachedReadCount, 1);
 });
 
 test('wikilink and unambiguous plain subject linkpath share one canonical identity', () => {
@@ -347,7 +572,18 @@ test('legacy settings migrate roadmap anchors out of the template guard', () => 
   assert.equal(migrated.propertyMappings.subject, 'predmet, course');
   assert.ok(migrated.propertyMappings.type.split(',').map((value) => value.trim()).includes('typ'));
   assert.equal(migrated.excludedTemplateValues, 'šablóna, template');
+  assert.equal(migrated.sourceScopeMode, 'all');
+  assert.deepEqual(migrated.sourceScopeRules, []);
 });
+
+function createRulesParser(
+  rules: readonly { readonly property: string; readonly acceptedValues: string }[],
+): RoadmapParser {
+  return new RoadmapParser(metadataCache, {
+    ...createDefaultParserOptions(),
+    sourceScope: compileSourceScope('rules', rules),
+  });
+}
 
 function createFile(path: string): TFile {
   const filename = path.split('/').at(-1) ?? path;
