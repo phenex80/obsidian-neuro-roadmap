@@ -1,4 +1,4 @@
-import type { App } from 'obsidian';
+import { TFile, type App } from 'obsidian';
 import { DependencyEngine } from './DependencyEngine';
 import type { RoadmapIndexer } from './Indexer';
 import type { RoadmapNode } from '../types';
@@ -44,8 +44,17 @@ export class RoadmapScheduler {
   }
 
   async openSource(node: RoadmapNode): Promise<void> {
-    const linktext =
-      node.blockId === undefined ? node.path : `${node.path}#^${node.blockId}`;
-    await this.app.workspace.openLinkText(linktext, node.path, false);
+    if (node.blockId !== undefined) {
+      await this.app.workspace.openLinkText(`${node.path}#^${node.blockId}`, node.path, false);
+      return;
+    }
+    const file = this.app.vault.getAbstractFileByPath(node.path);
+    if (!(file instanceof TFile)) {
+      return;
+    }
+    await this.app.workspace.getLeaf(false).openFile(file, {
+      active: true,
+      eState: node.sourceLine === undefined ? undefined : { line: node.sourceLine },
+    });
   }
 }

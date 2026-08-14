@@ -241,10 +241,25 @@
           onOpenSource={(node) => scheduler.openSource(node)}
         />
       {:else}
-        <HorizonBoard nodes={filteredNodes} {enableColorCoding} onEdit={openScratchpad} />
+        <HorizonBoard
+          nodes={filteredNodes}
+          {enableColorCoding}
+          nextDays={settings.horizonNextDays}
+          criticalDays={settings.horizonCriticalDays}
+          overduePreviewLimit={settings.horizonOverduePreviewLimit}
+          onEdit={openScratchpad}
+          onToggleComplete={(node, completed) => scheduler.setTaskCompletion(node, completed).then(() => undefined)}
+          onOpenSource={(node) => scheduler.openSource(node)}
+        />
       {/if}
     </div>
-    <UnscheduledDrawer nodes={filteredNodes} {enableColorCoding} onEdit={openScratchpad} />
+    <UnscheduledDrawer
+      nodes={filteredNodes}
+      {enableColorCoding}
+      onEdit={openScratchpad}
+      onToggleComplete={(node, completed) => scheduler.setTaskCompletion(node, completed).then(() => undefined)}
+      onOpenSource={(node) => scheduler.openSource(node)}
+    />
   </div>
 </main>
 
@@ -275,7 +290,7 @@
     flex-wrap: wrap;
     align-items: center;
     justify-content: flex-start !important;
-    gap: 12px;
+    gap: var(--size-4-3);
     padding: var(--size-4-2) var(--size-4-3);
     border-bottom: var(--border-width) solid var(--border-color);
     background: var(--background-primary);

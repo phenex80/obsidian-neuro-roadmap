@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { classifyHorizon, formatRelativeTaskDate } from '../../core/HorizonPlanner';
   import type { RoadmapNode } from '../../types';
+  import TaskCard from './TaskCard.svelte';
 
   type HorizonColumn = 'now' | 'next' | 'later';
   const HORIZON_COLUMNS: readonly HorizonColumn[] = ['now', 'next', 'later'];
@@ -7,91 +9,74 @@
   let {
     nodes,
     enableColorCoding,
+    nextDays,
+    criticalDays,
+    overduePreviewLimit,
     onEdit,
+    onToggleComplete,
+    onOpenSource,
   }: {
     nodes: readonly RoadmapNode[];
     enableColorCoding: boolean;
+    nextDays: number;
+    criticalDays: number;
+    overduePreviewLimit: number;
     onEdit: (node: RoadmapNode) => void;
+    onToggleComplete: (node: RoadmapNode, completed: boolean) => Promise<void>;
+    onOpenSource: (node: RoadmapNode) => Promise<void>;
   } = $props();
-
+  let showAllOverdue = $state(false);
+  let plan = $derived(classifyHorizon(nodes, { nextDays, criticalDays }));
+  let visibleOverdue = $derived(
+    showAllOverdue ? plan.overdue : plan.overdue.slice(0, overduePreviewLimit),
+  );
   let columns = $derived({
-    now: getNowNodes(nodes),
-    next: getNextNodes(nodes),
-    later: getLaterNodes(nodes),
+    now: [...visibleOverdue, ...plan.now],
+    next: plan.next,
+    later: plan.later,
   });
-
-  function getNowNodes(items: readonly RoadmapNode[]): RoadmapNode[] {
-    return items
-      .filter((node) => node.status === 'in-progress')
-      .sort(compareByUrgency)
-      .slice(0, 3);
-  }
-
-  function getNextNodes(items: readonly RoadmapNode[]): RoadmapNode[] {
-    const nowIds = new Set(getNowNodes(items).map((node) => node.id));
-    return items
-      .filter((node) => !nowIds.has(node.id) && node.status !== 'done' && node.dueDate !== undefined)
-      .sort(compareByUrgency);
-  }
-
-  function getLaterNodes(items: readonly RoadmapNode[]): RoadmapNode[] {
-    const nowIds = new Set(getNowNodes(items).map((node) => node.id));
-    const nextIds = new Set(getNextNodes(items).map((node) => node.id));
-    return items
-      .filter((node) => !nowIds.has(node.id) && !nextIds.has(node.id) && node.status !== 'done')
-      .sort((left, right) => left.title.localeCompare(right.title));
-  }
-
-  function compareByUrgency(left: RoadmapNode, right: RoadmapNode): number {
-    return (left.dueDate ?? '9999-12-31').localeCompare(right.dueDate ?? '9999-12-31');
-  }
 
   function columnTitle(column: HorizonColumn): string {
     return column.charAt(0).toUpperCase() + column.slice(1);
   }
 
-  function formatLabel(value: string): string {
-    return value.replace('-', ' ').replace(/^./, (letter) => letter.toUpperCase());
-  }
-
-  function onCardKeyDown(event: KeyboardEvent, node: RoadmapNode): void {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      onEdit(node);
-    }
+  function columnCount(column: HorizonColumn): number {
+    return column === 'now' ? plan.overdue.length + plan.now.length : columns[column].length;
   }
 </script>
 
 <section class="horizon" aria-label="Horizon board">
   {#each HORIZON_COLUMNS as column (column)}
     <section class="horizon-column" aria-label={columnTitle(column)}>
-      <header>
+      <header class="column-header">
         <h3>{columnTitle(column)}</h3>
-        <span>{columns[column].length}</span>
+        <span>{columnCount(column)}</span>
       </header>
+
+      {#if column === 'now' && plan.overdue.length > 0}
+        <div class="overdue-summary">
+          <strong>Overdue · {plan.overdue.length}</strong>
+          {#if plan.overdue.length > overduePreviewLimit}
+            <button type="button" onclick={() => (showAllOverdue = !showAllOverdue)}>
+              {showAllOverdue ? 'Show fewer' : 'Show all'}
+            </button>
+          {/if}
+        </div>
+      {/if}
+
       <div class="cards">
         {#if columns[column].length === 0}
           <p class="column-empty">Nothing here yet.</p>
         {:else}
           {#each columns[column] as node (node.id)}
-            <button
-              type="button"
-              class={`roadmap-card status-${node.status}`}
-              class:color-coded={enableColorCoding}
-              title={node.path}
-              ondblclick={() => onEdit(node)}
-              onkeydown={(event) => onCardKeyDown(event, node)}
-            >
-              <strong class="card-title">
-                {node.title ? node.title : (node.path ? (node.path.split('/').pop()?.replace('.md', '') ?? 'Neznáma úloha') : 'Neznáma úloha')}
-              </strong>
-              <span class="metadata-row">
-                <span class={`metadata-badge status-badge status-${node.status}`}>{formatLabel(node.status)}</span>
-                <span class={`metadata-badge priority-badge priority-${node.priority}`}>
-                  {formatLabel(node.priority)} priority
-                </span>
-              </span>
-            </button>
+            <TaskCard
+              {node}
+              {enableColorCoding}
+              dateLabel={formatRelativeTaskDate(node)}
+              {onToggleComplete}
+              {onOpenSource}
+              {onEdit}
+            />
           {/each}
         {/if}
       </div>
@@ -102,25 +87,31 @@
 <style>
   .horizon {
     display: grid;
-    grid-template-columns: repeat(3, minmax(clamp(12rem, 24vw, 20rem), 1fr));
+    grid-template-columns: repeat(3, minmax(min(18rem, 85vw), 1fr));
     gap: var(--size-4-3);
     overflow-x: auto;
   }
 
   .horizon-column {
     min-height: 14rem;
-    max-height: calc(100vh - 200px);
+    max-height: calc(100vh - 12.5rem);
     padding: var(--size-4-3);
     overflow-y: auto;
+    overscroll-behavior: contain;
     border: var(--border-width) solid var(--border-color);
     border-radius: var(--radius-m);
     background: var(--background-secondary);
   }
 
-  header {
+  .column-header,
+  .overdue-summary {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: var(--size-4-2);
+  }
+
+  .column-header {
     margin-bottom: var(--size-4-3);
   }
 
@@ -129,13 +120,28 @@
     margin: 0;
   }
 
-  h3 {
-    color: var(--text-normal);
-  }
-
-  header span,
+  .column-header span,
   .column-empty {
     color: var(--text-muted);
+  }
+
+  .overdue-summary {
+    margin-bottom: var(--size-4-2);
+    padding: var(--size-4-2);
+    border: var(--border-width) solid var(--status-overdue);
+    border-radius: var(--radius-s);
+    color: var(--text-error);
+    font-size: var(--font-ui-small);
+  }
+
+  .overdue-summary button {
+    padding: var(--size-2-1) var(--size-4-2);
+    border: var(--border-width) solid var(--border-color);
+    border-radius: var(--radius-s);
+    background: var(--background-primary-alt);
+    color: var(--text-normal);
+    font: inherit;
+    cursor: pointer;
   }
 
   .cards {
@@ -143,127 +149,18 @@
     gap: var(--size-4-2);
   }
 
-  .roadmap-card {
-    display: flex !important;
-    width: 100% !important;
-    box-sizing: border-box !important;
-    flex-direction: column !important;
-    align-items: flex-start !important;
-    justify-content: flex-start !important;
-    gap: 8px;
-    height: auto !important;
-    min-width: 0;
-    min-height: min-content !important;
-    padding: 12px !important;
-    overflow: hidden;
-    border: var(--border-width) solid var(--border-color);
-    border-radius: var(--radius-m);
-    background: var(--background-primary-alt);
-    color: var(--text-normal);
-    font: inherit;
-    text-align: left;
-    cursor: pointer;
-    transition: border-color var(--anim-duration-fast) var(--anim-motion-swing);
-  }
-
-  .roadmap-card:hover,
-  .roadmap-card:focus-visible {
-    border-color: var(--interactive-accent);
-  }
-
-  .card-title {
-    display: -webkit-box !important;
-    width: 100% !important;
-    flex: 0 0 auto;
-    overflow: hidden !important;
-    padding-bottom: 8px !important;
-    color: var(--text-normal);
-    font-size: var(--font-ui-medium);
-    font-weight: 600 !important;
-    line-height: 1.4 !important;
-    text-align: left !important;
-    white-space: normal !important;
-    -webkit-box-orient: vertical !important;
-    -webkit-line-clamp: 2 !important;
-    line-clamp: 2 !important;
-  }
-
-  .roadmap-card.color-coded.status-todo {
-    border-inline-start-color: var(--status-todo);
-  }
-
-  .roadmap-card.color-coded.status-in-progress {
-    border-inline-start-color: var(--status-in-progress);
-  }
-
-  .roadmap-card.color-coded.status-done {
-    border-inline-start-color: var(--status-done);
-  }
-
-  .metadata-row {
-    display: flex !important;
-    width: 100% !important;
-    flex-wrap: wrap !important;
-    gap: 6px !important;
-    margin-top: auto !important;
-  }
-
-  .metadata-badge {
-    display: inline-flex;
-    align-items: center;
-    width: max-content;
-    padding: var(--size-2-1) var(--size-4-2);
-    border: var(--border-width) solid var(--border-color);
-    border-radius: var(--radius-l);
-    background: var(--background-modifier-hover);
-    color: var(--text-muted);
-    font-size: var(--font-ui-smaller);
-  }
-
-  .color-coded .status-badge.status-todo {
-    background: var(--status-todo);
-    color: white;
-  }
-
-  .color-coded .status-badge.status-in-progress {
-    background: var(--status-in-progress);
-    color: white;
-  }
-
-  .color-coded .status-badge.status-done {
-    background: var(--status-done);
-    color: white;
-  }
-
-  .color-coded .priority-badge.priority-high {
-    background: var(--priority-high);
-    color: white;
-  }
-
-  .color-coded .priority-badge.priority-medium {
-    background: var(--priority-medium);
-    color: white;
-  }
-
-  .color-coded .priority-badge.priority-low {
-    background: var(--priority-low);
-    color: var(--text-normal);
-  }
-
   .column-empty {
     padding: var(--size-4-2) 0;
   }
 
-  @media (max-width: 1024px) {
+  @media (max-width: 64rem) {
     .horizon {
       display: flex;
-      grid-template-columns: minmax(280px, 1fr);
-      overflow-x: auto;
     }
 
     .horizon-column {
-      min-width: 280px;
-      flex-shrink: 0;
+      width: min(20rem, 82vw);
+      flex: 0 0 auto;
     }
   }
 </style>

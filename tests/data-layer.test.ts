@@ -20,6 +20,7 @@ import type { RoadmapNode } from '../src/types';
 import { DependencyEngine } from '../src/core/DependencyEngine';
 import type { RoadmapIndexer } from '../src/core/Indexer';
 import { buildSubjectSummaries } from '../src/core/DashboardMetrics';
+import { classifyHorizon, formatRelativeTaskDate } from '../src/core/HorizonPlanner';
 
 const metadataCache = {
   getFirstLinkpathDest: () => null,
@@ -189,6 +190,26 @@ test('dashboard completion counts tasks but not roadmap or project anchor nodes'
   assert.equal(summary?.completionPercent, 33);
   assert.equal(summary?.overdueCount, 1);
   assert.equal(summary?.nextDeadline?.id, 'todo');
+});
+
+test('Horizon separates overdue, today, next week, later, and unscheduled tasks', () => {
+  const nodes = [
+    createNode('overdue', { dueDate: '2026-09-09' }),
+    createNode('today', { dueDate: '2026-09-10' }),
+    createNode('active', { status: 'in-progress' }),
+    createNode('next', { dueDate: '2026-09-15' }),
+    createNode('later', { dueDate: '2026-10-01' }),
+    createNode('unscheduled'),
+    createNode('done', { dueDate: '2026-09-01', status: 'done', completed: true }),
+  ];
+  const plan = classifyHorizon(nodes, { nextDays: 7, criticalDays: 0 }, '2026-09-10');
+
+  assert.deepEqual(plan.overdue.map((node) => node.id), ['overdue']);
+  assert.deepEqual(plan.now.map((node) => node.id), ['active', 'today']);
+  assert.deepEqual(plan.next.map((node) => node.id), ['next']);
+  assert.deepEqual(plan.later.map((node) => node.id), ['later']);
+  assert.deepEqual(plan.unscheduled.map((node) => node.id), ['unscheduled']);
+  assert.equal(formatRelativeTaskDate(nodes[0]!, '2026-09-12'), '3 days overdue');
 });
 
 function createFile(path: string): TFile {
