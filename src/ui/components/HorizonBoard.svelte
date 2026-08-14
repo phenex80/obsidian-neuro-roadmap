@@ -79,7 +79,9 @@
               ondblclick={() => onEdit(node)}
               onkeydown={(event) => onCardKeyDown(event, node)}
             >
-              <span class="card-title">{node.title || node.path.split('/').pop()?.replace('.md', '') || 'Neznáma úloha'}</span>
+              <span class="card-title">
+                {node.title || (node.path ? node.path.split('/').pop()?.replace('.md', '') : undefined) || 'Neznáma úloha'}
+              </span>
               <span class="metadata-row">
                 <span class={`metadata-badge status-badge status-${node.status}`}>{formatLabel(node.status)}</span>
                 <span class={`metadata-badge priority-badge priority-${node.priority}`}>
@@ -122,8 +124,7 @@
     margin: 0;
   }
 
-  h3,
-  .card-title {
+  h3 {
     color: var(--text-normal);
   }
 
@@ -139,7 +140,10 @@
 
   .roadmap-card {
     display: flex;
+    width: 100%;
     flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
     gap: var(--size-4-3);
     min-width: 0;
     padding: var(--size-4-3);
@@ -159,8 +163,14 @@
   }
 
   .card-title {
+    display: block;
+    width: 100%;
+    flex: 0 0 auto;
     overflow: hidden;
-    font-weight: var(--font-semibold);
+    margin-bottom: var(--size-2-2);
+    color: var(--text-normal);
+    font-size: var(--font-ui-medium);
+    font-weight: 600;
     text-overflow: ellipsis;
     white-space: nowrap;
   }

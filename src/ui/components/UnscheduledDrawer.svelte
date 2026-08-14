@@ -59,7 +59,9 @@
             ondblclick={() => onEdit(node)}
             onkeydown={(event) => onCardKeyDown(event, node)}
           >
-            <strong>{node.title || node.path.split('/').pop()?.replace('.md', '') || 'Neznáma úloha'}</strong>
+            <span class="card-title">
+              {node.title || (node.path ? node.path.split('/').pop()?.replace('.md', '') : undefined) || 'Neznáma úloha'}
+            </span>
             <span class="metadata-row">
               <span class={`metadata-badge status-badge status-${node.status}`}>{formatLabel(node.status)}</span>
               <span class={`metadata-badge priority-badge priority-${node.priority}`}>
@@ -95,8 +97,7 @@
     margin: 0;
   }
 
-  h3,
-  strong {
+  h3 {
     color: var(--text-normal);
   }
 
@@ -114,7 +115,10 @@
 
   .task-card {
     display: flex;
+    width: 100%;
     flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
     gap: var(--size-4-3);
     min-width: 0;
     padding: var(--size-4-3);
@@ -142,8 +146,15 @@
     color: white;
   }
 
-  .task-card strong {
+  .card-title {
+    display: block;
+    width: 100%;
+    flex: 0 0 auto;
     overflow: hidden;
+    margin-bottom: var(--size-2-2);
+    color: var(--text-normal);
+    font-size: var(--font-ui-medium);
+    font-weight: 600;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
