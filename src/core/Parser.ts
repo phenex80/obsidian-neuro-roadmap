@@ -12,6 +12,7 @@ import {
   compilePropertyKeyMap,
   compileSemanticValueMap,
   mapNodeType,
+  mapCalendarSemanticType,
   mapPriority,
   mapStatus,
   normalizeSemanticValue,
@@ -178,6 +179,7 @@ export class RoadmapParser {
     const startEntry = readMappedValue(values, this.options.propertyKeys.startDate);
     const dueEntry = readMappedValue(values, this.options.propertyKeys.dueDate);
     const statusEntry = readMappedValue(values, this.options.propertyKeys.status);
+    const calendarTypeEntry = readMappedValue(values, this.options.propertyKeys.calendarType);
     const priorityEntry = readMappedValue(values, this.options.propertyKeys.priority);
     const bufferEntry = readMappedValue(values, this.options.propertyKeys.durationBuffer);
     const hardEntry = readMappedValue(values, this.options.propertyKeys.hardDependency);
@@ -202,6 +204,10 @@ export class RoadmapParser {
     }
 
     const type = mappedType ?? (milestoneFlag ? 'milestone' : 'task');
+    const calendarType =
+      mapCalendarSemanticType(calendarTypeEntry?.value, this.options.semanticValues) ??
+      mapCalendarSemanticType(typeEntry?.value, this.options.semanticValues) ??
+      inferCalendarType(type);
     const status = mapStatus(statusEntry?.value, this.options.semanticValues) ?? 'todo';
     const priority =
       mapPriority(priorityEntry?.value, this.options.semanticValues) ??
@@ -214,6 +220,7 @@ export class RoadmapParser {
     const parsed = roadmapNodeFrontmatterSchema.safeParse({
       title,
       type,
+      calendar_type: calendarType,
       semester,
       subject,
       project,
@@ -236,6 +243,7 @@ export class RoadmapParser {
       path: file.path,
       title: data.title ?? file.basename,
       type: data.type,
+      calendarType: data.calendar_type,
       semester: data.semester,
       subject: data.subject,
       project: data.project,
@@ -291,6 +299,8 @@ export class RoadmapParser {
       const dueEntry = this.readInlineEntry(inlineProperties, 'dueDate');
       const milestoneEntry = this.readInlineEntry(inlineProperties, 'milestone');
       const statusEntry = this.readInlineEntry(inlineProperties, 'status');
+      const calendarTypeEntry = this.readInlineEntry(inlineProperties, 'calendarType');
+      const inlineTypeEntry = this.readInlineEntry(inlineProperties, 'type');
       const startDate = readDate(startEntry?.value);
       const milestoneDate = readDate(milestoneEntry?.value);
       const dueDate = readDate(dueEntry?.value) ?? milestoneDate;
@@ -329,6 +339,10 @@ export class RoadmapParser {
         path: file.path,
         title,
         type: milestoneDate !== undefined ? 'milestone' : 'task',
+        calendarType:
+          mapCalendarSemanticType(calendarTypeEntry?.value, this.options.semanticValues) ??
+          mapCalendarSemanticType(inlineTypeEntry?.value, this.options.semanticValues) ??
+          (milestoneDate !== undefined ? 'milestone' : 'regular-task'),
         semester: inheritedSemester,
         subject,
         project,
@@ -481,6 +495,16 @@ function taskStatus(
     return 'unscheduled';
   }
   return startDate === undefined && dueDate === undefined ? 'unscheduled' : 'todo';
+}
+
+function inferCalendarType(type: RoadmapNode['type']): RoadmapNode['calendarType'] {
+  if (type === 'milestone') {
+    return 'milestone';
+  }
+  if (type === 'project') {
+    return 'project-deadline';
+  }
+  return 'regular-task';
 }
 
 function extractInlineProperties(taskBody: string): InlineProperties {

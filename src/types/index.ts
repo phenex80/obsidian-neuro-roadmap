@@ -4,6 +4,14 @@ export const NODE_TYPES = ['roadmap', 'project', 'milestone', 'task'] as const;
 export const PRIORITIES = ['high', 'medium', 'low'] as const;
 export const NODE_STATUSES = ['todo', 'in-progress', 'done', 'unscheduled'] as const;
 export const SOURCE_SCOPE_MODES = ['all', 'rules'] as const;
+export const CALENDAR_SEMANTIC_TYPES = [
+  'exam',
+  'assignment-deadline',
+  'project-deadline',
+  'milestone',
+  'presentation',
+  'regular-task',
+] as const;
 
 export const CANONICAL_PROPERTY_FIELDS = [
   'title',
@@ -11,6 +19,7 @@ export const CANONICAL_PROPERTY_FIELDS = [
   'semester',
   'project',
   'type',
+  'calendarType',
   'status',
   'priority',
   'startDate',
@@ -53,6 +62,7 @@ export const wikilinkSchema = z
 export const roadmapNodeFrontmatterSchema = z.object({
   title: z.string().trim().min(1).optional(),
   type: z.enum(NODE_TYPES).default('task'),
+  calendar_type: z.enum(CALENDAR_SEMANTIC_TYPES).default('regular-task'),
   semester: z.string().trim().min(1).optional(),
   subject: z.string().trim().min(1).optional(),
   project: z.string().trim().min(1).optional(),
@@ -83,6 +93,9 @@ export const propertyMappingSchema = z.object({
   semester: z.string().default('semester, obdobie, term'),
   project: z.string().default('project, projekt, workstream, work_stream'),
   type: z.string().default('type, typ, kind, category'),
+  calendarType: z
+    .string()
+    .default('calendar_type, calendarType, event_type, eventType, udalosť, udalost'),
   status: z.string().default('status, stav'),
   priority: z.string().default('priority, priorita'),
   startDate: z.string().default('start_date, start, startDate, začiatok, zaciatok'),
@@ -110,6 +123,16 @@ export const semanticValueMappingSchema = z.object({
   typeProject: z.string().default('project, projekt, workstream'),
   typeMilestone: z.string().default('milestone, míľnik, milnik'),
   typeTask: z.string().default('task, úloha, uloha'),
+  calendarExam: z.string().default('exam, skúška, skuska, test'),
+  calendarAssignmentDeadline: z
+    .string()
+    .default('assignment deadline, assignment, zadanie, odovzdanie zadania'),
+  calendarProjectDeadline: z
+    .string()
+    .default('project deadline, project due, projektový termín, projektovy termin'),
+  calendarMilestone: z.string().default('milestone, míľnik, milnik'),
+  calendarPresentation: z.string().default('presentation, prezentácia, prezentacia'),
+  calendarRegularTask: z.string().default('regular task, task, úloha, uloha'),
 });
 
 const colorValueSchema = z.string().regex(/^#[0-9a-f]{6}$/iu);
@@ -129,6 +152,30 @@ export const sourceScopeRuleSchema = z.object({
   acceptedValues: z.string().default(''),
 });
 
+export const calendarPolicySchema = z.object({
+  exam: z.boolean().default(true),
+  'assignment-deadline': z.boolean().default(true),
+  'project-deadline': z.boolean().default(true),
+  milestone: z.boolean().default(true),
+  presentation: z.boolean().default(true),
+  'regular-task': z.boolean().default(false),
+});
+
+export const calendarReminderPolicySchema = z.object({
+  exam: z.number().int().min(0).nullable().default(1440),
+  'assignment-deadline': z.number().int().min(0).nullable().default(1440),
+  'project-deadline': z.number().int().min(0).nullable().default(1440),
+  milestone: z.number().int().min(0).nullable().default(1440),
+  presentation: z.number().int().min(0).nullable().default(60),
+  'regular-task': z.number().int().min(0).nullable().default(60),
+});
+
+export const calendarSettingsSchema = z.object({
+  automaticallyInclude: calendarPolicySchema.default({}),
+  remindersEnabled: z.boolean().default(true),
+  reminderMinutes: calendarReminderPolicySchema.default({}),
+});
+
 export const roadmapSettingsSchema = z.object({
   defaultDurationBuffer: z.number().finite().positive().default(1.3),
   defaultPriority: z.enum(PRIORITIES).default('medium'),
@@ -143,17 +190,22 @@ export const roadmapSettingsSchema = z.object({
   horizonCriticalDays: z.number().int().min(0).max(30).default(0),
   horizonOverduePreviewLimit: z.number().int().min(1).max(50).default(5),
   colors: colorSettingsSchema.default({}),
+  calendar: calendarSettingsSchema.default({}),
 });
 
 export type NodeType = (typeof NODE_TYPES)[number];
 export type Priority = (typeof PRIORITIES)[number];
 export type NodeStatus = (typeof NODE_STATUSES)[number];
 export type SourceScopeMode = (typeof SOURCE_SCOPE_MODES)[number];
+export type CalendarSemanticType = (typeof CALENDAR_SEMANTIC_TYPES)[number];
 export type CanonicalPropertyField = (typeof CANONICAL_PROPERTY_FIELDS)[number];
 export type PropertyMappings = z.infer<typeof propertyMappingSchema>;
 export type SemanticValueMappings = z.infer<typeof semanticValueMappingSchema>;
 export type ColorSettings = z.infer<typeof colorSettingsSchema>;
 export type SourceScopeRule = z.infer<typeof sourceScopeRuleSchema>;
+export type CalendarPolicy = z.infer<typeof calendarPolicySchema>;
+export type CalendarReminderPolicy = z.infer<typeof calendarReminderPolicySchema>;
+export type CalendarSettings = z.infer<typeof calendarSettingsSchema>;
 export type RoadmapNodeFrontmatter = z.infer<typeof roadmapNodeFrontmatterSchema>;
 export type InlineTask = z.infer<typeof inlineTaskSchema>;
 export type RoadmapSettings = z.infer<typeof roadmapSettingsSchema>;
@@ -169,6 +221,7 @@ export interface RoadmapNode {
   path: string;
   title: string;
   type: NodeType;
+  calendarType: CalendarSemanticType;
   semester?: string;
   subject?: string;
   project?: string;

@@ -1,9 +1,11 @@
 import {
   CANONICAL_PROPERTY_FIELDS,
+  CALENDAR_SEMANTIC_TYPES,
   NODE_STATUSES,
   NODE_TYPES,
   PRIORITIES,
   type CanonicalPropertyField,
+  type CalendarSemanticType,
   type NodeStatus,
   type NodeType,
   type Priority,
@@ -17,6 +19,7 @@ export interface SemanticValueMap {
   readonly status: Readonly<Record<NodeStatus, readonly string[]>>;
   readonly priority: Readonly<Record<Priority, readonly string[]>>;
   readonly type: Readonly<Record<NodeType, readonly string[]>>;
+  readonly calendarType: Readonly<Record<CalendarSemanticType, readonly string[]>>;
 }
 
 export function parseCommaSeparatedValues(value: string): string[] {
@@ -49,6 +52,14 @@ export function compileSemanticValueMap(mappings: SemanticValueMappings): Semant
       project: parseCommaSeparatedValues(mappings.typeProject),
       milestone: parseCommaSeparatedValues(mappings.typeMilestone),
       task: parseCommaSeparatedValues(mappings.typeTask),
+    },
+    calendarType: {
+      exam: parseCommaSeparatedValues(mappings.calendarExam),
+      'assignment-deadline': parseCommaSeparatedValues(mappings.calendarAssignmentDeadline),
+      'project-deadline': parseCommaSeparatedValues(mappings.calendarProjectDeadline),
+      milestone: parseCommaSeparatedValues(mappings.calendarMilestone),
+      presentation: parseCommaSeparatedValues(mappings.calendarPresentation),
+      'regular-task': parseCommaSeparatedValues(mappings.calendarRegularTask),
     },
   };
 }
@@ -98,6 +109,13 @@ export function mapPriority(value: unknown, mapping: SemanticValueMap): Priority
 
 export function mapNodeType(value: unknown, mapping: SemanticValueMap): NodeType | undefined {
   return mapSemanticEnum(value, NODE_TYPES, mapping.type);
+}
+
+export function mapCalendarSemanticType(
+  value: unknown,
+  mapping: SemanticValueMap,
+): CalendarSemanticType | undefined {
+  return mapSemanticEnum(value, CALENDAR_SEMANTIC_TYPES, mapping.calendarType);
 }
 
 export function readValueStrings(value: unknown): string[] {

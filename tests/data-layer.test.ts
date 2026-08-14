@@ -7,6 +7,7 @@ import {
   compileSemanticValueMap,
   mapPriority,
   mapStatus,
+  mapCalendarSemanticType,
   readMappedValue,
 } from '../src/core/SemanticMapping';
 import { propertyMappingSchema, semanticValueMappingSchema } from '../src/types';
@@ -19,6 +20,7 @@ import {
 import type { RoadmapNode } from '../src/types';
 import { DependencyEngine } from '../src/core/DependencyEngine';
 import { RoadmapIndexer } from '../src/core/Indexer';
+import { isCalendarEligible, projectCalendarEvent } from '../src/core/CalendarCore';
 import { buildSubjectSummaries } from '../src/core/DashboardMetrics';
 import { classifyHorizon, formatRelativeTaskDate } from '../src/core/HorizonPlanner';
 import { migrateRoadmapSettingsData } from '../src/core/SettingsMigration';
@@ -45,6 +47,55 @@ test('semantic status and priority values normalize aliases and diacritics', () 
   assert.equal(mapStatus('hotové', values), 'done');
   assert.equal(mapStatus('AKTÍVNY', values), 'in-progress');
   assert.equal(mapPriority('vysoká', values), 'high');
+  assert.equal(mapCalendarSemanticType('skúška', values), 'exam');
+  assert.equal(mapCalendarSemanticType('prezentácia', values), 'presentation');
+});
+
+test('calendar policy includes meaningful dates and excludes regular tasks by default', () => {
+  const options = createCalendarOptions();
+  assert.equal(isCalendarEligible(createNode('exam', { calendarType: 'exam', dueDate: '2026-10-10' }), options), true);
+  assert.equal(isCalendarEligible(createNode('milestone', { calendarType: 'milestone', dueDate: '2026-10-11' }), options), true);
+  assert.equal(isCalendarEligible(createNode('project', { calendarType: 'project-deadline', dueDate: '2026-10-12' }), options), true);
+  assert.equal(isCalendarEligible(createNode('task', { calendarType: 'regular-task', dueDate: '2026-10-13' }), options), false);
+});
+
+test('calendar item overrides take precedence over global policy', () => {
+  const regularTask = createNode('task', { calendarType: 'regular-task', dueDate: '2026-10-13' });
+  const milestone = createNode('milestone', { calendarType: 'milestone', dueDate: '2026-10-14' });
+  assert.equal(isCalendarEligible(regularTask, { ...createCalendarOptions(), override: 'include' }), true);
+  assert.equal(isCalendarEligible(milestone, { ...createCalendarOptions(), override: 'exclude' }), false);
+});
+
+test('calendar projection uses commitment date instead of the Gantt planning interval', () => {
+  const node = createNode('assignment', {
+    title: 'Odovzdať reflexiu',
+    subject: 'ISKB02',
+    calendarType: 'assignment-deadline',
+    startDate: '2026-10-01',
+    dueDate: '2026-10-10',
+  });
+  const event = projectCalendarEvent(node, 'stable-id', createCalendarOptions());
+  assert.equal(event?.startDate, '2026-10-10');
+  assert.equal(event?.endDateExclusive, '2026-10-11');
+  assert.equal(event?.title, 'ISKB02 · Odovzdať reflexiu');
+  assert.equal(event?.availability, 'free');
+});
+
+test('completed and overdue items retain calendar projection semantics', () => {
+  const completed = projectCalendarEvent(
+    createNode('done', { calendarType: 'exam', dueDate: '2026-09-01', status: 'done', completed: true }),
+    'done-id',
+    createCalendarOptions('2026-09-10'),
+  );
+  const overdue = projectCalendarEvent(
+    createNode('late', { calendarType: 'exam', dueDate: '2026-09-01' }),
+    'late-id',
+    createCalendarOptions('2026-09-10'),
+  );
+  assert.equal(completed?.completed, true);
+  assert.equal(completed?.overdue, false);
+  assert.equal(overdue?.overdue, true);
+  assert.match(overdue?.description ?? '', /Overdue: yes/u);
 });
 
 test('roadmap anchor notes contribute inline tasks but are not task nodes', () => {
@@ -585,6 +636,17 @@ function createRulesParser(
   });
 }
 
+function createCalendarOptions(today = '2026-09-01') {
+  const settings = roadmapSettingsSchema.parse({}).calendar;
+  return {
+    automaticallyInclude: settings.automaticallyInclude,
+    remindersEnabled: settings.remindersEnabled,
+    reminderMinutes: settings.reminderMinutes,
+    today,
+    vaultName: 'Academic Vault',
+  };
+}
+
 function createFile(path: string): TFile {
   const filename = path.split('/').at(-1) ?? path;
   return {
@@ -619,6 +681,7 @@ function createNode(
     path: `${id}.md`,
     title: id,
     type: 'task',
+    calendarType: 'regular-task',
     durationBuffer: 1.3,
     priority: 'medium',
     status: 'todo',

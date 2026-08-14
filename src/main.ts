@@ -37,6 +37,7 @@ const PROPERTY_LABELS: Readonly<Record<CanonicalPropertyField, string>> = {
   semester: 'Semester',
   project: 'Project / workstream',
   type: 'Type',
+  calendarType: 'Calendar type',
   status: 'Status',
   priority: 'Priority',
   startDate: 'Start date',
@@ -357,6 +358,12 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
       { key: 'typeProject', name: 'Type: Project', description: 'Project or workstream values.' },
       { key: 'typeMilestone', name: 'Type: Milestone', description: 'Milestone values.' },
       { key: 'typeTask', name: 'Type: Task', description: 'Task values.' },
+      { key: 'calendarExam', name: 'Calendar: Exam', description: 'Values classified as exams.' },
+      { key: 'calendarAssignmentDeadline', name: 'Calendar: Assignment deadline', description: 'Values classified as assignment deadlines.' },
+      { key: 'calendarProjectDeadline', name: 'Calendar: Project deadline', description: 'Values classified as project deadlines.' },
+      { key: 'calendarMilestone', name: 'Calendar: Milestone', description: 'Values classified as milestones.' },
+      { key: 'calendarPresentation', name: 'Calendar: Presentation', description: 'Values classified as presentations.' },
+      { key: 'calendarRegularTask', name: 'Calendar: Regular task', description: 'Values classified as ordinary tasks.' },
     ];
 
     for (const item of settings) {
