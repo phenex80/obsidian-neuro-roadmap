@@ -33,9 +33,28 @@ export class RoadmapIndexer {
 
   /** Rebuilds the graph after parser configuration changes. */
   async rebuild(): Promise<void> {
+    this.resetGraph();
     const files = this.app.vault.getMarkdownFiles();
     await Promise.all(files.map(async (file) => this.reindexFile(file, false)));
     this.emitChange();
+  }
+
+  /** Returns cached YAML key usage without reading Markdown file bodies. */
+  detectFrontmatterPropertyUsage(): ReadonlyMap<string, number> {
+    const usage = new Map<string, number>();
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
+      if (frontmatter === undefined) {
+        continue;
+      }
+      for (const key of Object.keys(frontmatter)) {
+        if (key === 'position') {
+          continue;
+        }
+        usage.set(key, (usage.get(key) ?? 0) + 1);
+      }
+    }
+    return usage;
   }
 
   /** Registers all cache and vault lifecycle events with the owning plugin. */
@@ -134,12 +153,16 @@ export class RoadmapIndexer {
   }
 
   clear(): void {
+    this.resetGraph();
+    this.listeners.clear();
+    this.revisionsByPath.clear();
+  }
+
+  private resetGraph(): void {
     this.nodesById.clear();
     this.nodeIdsByPath.clear();
     this.dependenciesByNodeId.clear();
     this.dependentIdsByNodeId.clear();
-    this.listeners.clear();
-    this.revisionsByPath.clear();
   }
 
   private updateFile(file: TFile, cache: CachedMetadata, source: string): void {
@@ -162,9 +185,7 @@ export class RoadmapIndexer {
       return;
     }
 
-    const source = this.parser.hasMappedSubject(file, cache)
-      ? await this.readSourceForInlineTasks(file, cache)
-      : '';
+    const source = await this.readSourceForInlineTasks(file, cache);
     if (this.revisionsByPath.get(path) !== revision || file.path !== path) {
       return;
     }
@@ -180,8 +201,8 @@ export class RoadmapIndexer {
       return '';
     }
 
-    const containsIncompleteTask = cache.listItems?.some((item) => item.task === ' ') ?? false;
-    if (!containsIncompleteTask) {
+    const containsTask = cache.listItems?.some((item) => item.task !== undefined) ?? false;
+    if (!containsTask) {
       return '';
     }
 

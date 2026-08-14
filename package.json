@@ -6,7 +6,8 @@
   "scripts": {
     "build": "node esbuild.config.mjs production",
     "dev": "node esbuild.config.mjs",
-    "check": "svelte-check --tsconfig ./tsconfig.json && tsc --noEmit"
+    "check": "svelte-check --tsconfig ./tsconfig.json && tsc --noEmit",
+    "test": "node scripts/run-tests.mjs"
   },
   "keywords": [
     "obsidian",

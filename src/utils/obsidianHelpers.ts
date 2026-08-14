@@ -1,5 +1,6 @@
 import { TFile, type App } from 'obsidian';
 import type { RoadmapNode } from '../types';
+import { replaceTaskCheckbox } from '../core/MarkdownTask';
 
 export interface NodeDateUpdate {
   node: RoadmapNode;
@@ -21,8 +22,8 @@ export async function updateNodeDates(
 
   if (node.source === 'frontmatter') {
     await app.fileManager.processFrontMatter(file, (frontmatter) => {
-      frontmatter['start_date'] = startDate;
-      frontmatter['due_date'] = dueDate;
+      frontmatter[node.writeKeys.startDate] = startDate;
+      frontmatter[node.writeKeys.dueDate] = dueDate;
     });
     return;
   }
@@ -35,6 +36,40 @@ export async function updateNodeDatesBatch(app: App, updates: readonly NodeDateU
   for (const update of updates) {
     await updateNodeDates(app, update.node, update.startDate, update.dueDate);
   }
+}
+
+/** Atomically checks or unchecks the original Markdown checkbox task. */
+export async function updateMarkdownTaskCompletion(
+  app: App,
+  node: RoadmapNode,
+  completed: boolean,
+): Promise<boolean> {
+  if (node.source !== 'inline') {
+    return false;
+  }
+  const file = getMarkdownFile(app, node.path);
+  if (file === null) {
+    return false;
+  }
+
+  let updated = false;
+  await app.vault.process(file, (source) => {
+    const lines = source.split(/\r?\n/u);
+    const lineIndex = findInlineTaskLine(lines, node);
+    const originalLine = lines[lineIndex];
+    if (lineIndex === -1 || originalLine === undefined) {
+      return source;
+    }
+
+    const nextLine = replaceTaskCheckbox(originalLine, completed);
+    if (nextLine === originalLine) {
+      return source;
+    }
+    lines[lineIndex] = nextLine;
+    updated = true;
+    return lines.join('\n');
+  });
+  return updated;
 }
 
 /** Appends scratchpad text while preserving all existing note content. */
@@ -92,25 +127,21 @@ async function updateInlineTaskDates(
   startDate: string,
   dueDate: string,
 ): Promise<void> {
-  const source = await app.vault.read(file);
-  const lines = source.split(/\r?\n/u);
-  const lineIndex = findInlineTaskLine(lines, node);
-  if (lineIndex === -1) {
-    return;
-  }
+  await app.vault.process(file, (source) => {
+    const lines = source.split(/\r?\n/u);
+    const lineIndex = findInlineTaskLine(lines, node);
+    const originalLine = lines[lineIndex];
+    if (lineIndex === -1 || originalLine === undefined) {
+      return source;
+    }
 
-  const originalLine = lines[lineIndex];
-  if (originalLine === undefined) {
-    return;
-  }
-
-  const updatedLine = replaceInlineDateProperties(originalLine, startDate, dueDate);
-  if (updatedLine === originalLine) {
-    return;
-  }
-
-  lines[lineIndex] = updatedLine;
-  await app.vault.modify(file, lines.join('\n'));
+    const updatedLine = replaceInlineDateProperties(originalLine, node, startDate, dueDate);
+    if (updatedLine === originalLine) {
+      return source;
+    }
+    lines[lineIndex] = updatedLine;
+    return lines.join('\n');
+  });
 }
 
 function findInlineTaskLine(lines: readonly string[], node: RoadmapNode): number {
@@ -125,13 +156,18 @@ function findInlineTaskLine(lines: readonly string[], node: RoadmapNode): number
   return lineIndex >= 0 && isTaskLine(lines[lineIndex] ?? '') ? lineIndex : -1;
 }
 
-function replaceInlineDateProperties(line: string, startDate: string, dueDate: string): string {
-  const withStart = replaceOrInsertProperty(line, 'start', startDate);
-  return replaceOrInsertProperty(withStart, 'due', dueDate);
+function replaceInlineDateProperties(
+  line: string,
+  node: RoadmapNode,
+  startDate: string,
+  dueDate: string,
+): string {
+  const withStart = replaceOrInsertProperty(line, node.writeKeys.startDate, startDate);
+  return replaceOrInsertProperty(withStart, node.writeKeys.dueDate, dueDate);
 }
 
-function replaceOrInsertProperty(line: string, property: 'start' | 'due', value: string): string {
-  const propertyPattern = new RegExp(`\\[${property}::\\s*[^\\]]*\\]`, 'u');
+function replaceOrInsertProperty(line: string, property: string, value: string): string {
+  const propertyPattern = new RegExp(`\\[${escapeRegExp(property)}::\\s*[^\\]]*\\]`, 'iu');
   if (propertyPattern.test(line)) {
     return line.replace(propertyPattern, `[${property}:: ${value}]`);
   }

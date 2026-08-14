@@ -1,57 +1,60 @@
 import type { CachedMetadata, MetadataCache, TFile } from 'obsidian';
 import {
-  PRIORITIES,
-  NODE_STATUSES,
-  NODE_TYPES,
+  propertyMappingSchema,
+  roadmapNodeFrontmatterSchema,
+  semanticValueMappingSchema,
+  type CanonicalPropertyField,
+  type NodeStatus,
   type Priority,
   type RoadmapNode,
-  roadmapNodeFrontmatterSchema,
-  wikilinkSchema,
 } from '../types';
+import {
+  compilePropertyKeyMap,
+  compileSemanticValueMap,
+  mapNodeType,
+  mapPriority,
+  mapStatus,
+  normalizeSemanticValue,
+  readMappedValue,
+  readValueStrings,
+  uniqueNonEmptyValues,
+  type PropertyKeyMap,
+  type SemanticValueMap,
+} from './SemanticMapping';
 
-const ROADMAP_FRONTMATTER_KEYS = new Set([
-  'type',
-  'semester',
-  'subject',
-  'start_date',
-  'due_date',
-  'duration_buffer',
-  'priority',
-  'status',
-  'parent',
-  'depends_on',
-  'hard_dependency',
-]);
-const INLINE_TASK_PATTERN = /^\s*[-*+]\s+\[[^\]]\]\s*(.*?)\s*$/;
-const SUBJECT_PROPERTY_PATTERN = /\[subject::\s*(\[\[[^\]]+\]\])\s*\]/;
-const START_PROPERTY_PATTERN = /\[start::\s*([^\]]+?)\s*\]/;
-const DUE_PROPERTY_PATTERN = /\[due::\s*([^\]]+?)\s*\]/;
-const PRIORITY_PROPERTY_PATTERN = /\[priority::\s*([^\]]+?)\s*\]/;
+const INLINE_TASK_PATTERN = /^\s*[-*+]\s+\[([^\]])\]\s*(.*?)\s*$/u;
 const INLINE_PROPERTY_PATTERN =
-  /\[[^[\]:\r\n]+::\s*(?:\[\[[^\]]+\]\]|[^\]]*?)\]/gu;
-const BLOCK_ID_PATTERN = /\s+\^([A-Za-z0-9-]+)\s*$/;
+  /\[([^\[\]:\r\n]+)::\s*(\[\[[^\]]+\]\]|[^\]]*?)\]/gu;
+const BLOCK_ID_PATTERN = /\s+\^([A-Za-z0-9-]+)\s*$/u;
 
 type FrontmatterValues = Record<string, unknown>;
+type InlineProperties = ReadonlyMap<string, { readonly key: string; readonly value: string }>;
 
 export interface RoadmapParserOptions {
-  subjectPropertyKeys: readonly string[];
-  templatePropertyKey: string;
-  excludedTemplateValues: readonly string[];
+  readonly propertyKeys: PropertyKeyMap;
+  readonly semanticValues: SemanticValueMap;
+  readonly excludedTemplateValues: readonly string[];
+  readonly defaultDurationBuffer: number;
+  readonly defaultPriority: Priority;
 }
 
-const DEFAULT_PARSER_OPTIONS: RoadmapParserOptions = {
-  subjectPropertyKeys: ['predmet', 'subject'],
-  templatePropertyKey: 'typ',
-  excludedTemplateValues: ['roadmapa', 'šablóna', 'template'],
-};
+export function createDefaultParserOptions(): RoadmapParserOptions {
+  return {
+    propertyKeys: compilePropertyKeyMap(propertyMappingSchema.parse({})),
+    semanticValues: compileSemanticValueMap(semanticValueMappingSchema.parse({})),
+    excludedTemplateValues: ['template', 'šablóna', 'sablona'],
+    defaultDurationBuffer: 1.3,
+    defaultPriority: 'medium',
+  };
+}
 
-/** Parses cached Obsidian metadata and Markdown content into roadmap nodes. */
+/** Parses cached Obsidian metadata and Markdown content into canonical roadmap nodes. */
 export class RoadmapParser {
   private options: RoadmapParserOptions;
 
   constructor(
     private readonly metadataCache: MetadataCache,
-    options: RoadmapParserOptions = DEFAULT_PARSER_OPTIONS,
+    options: RoadmapParserOptions = createDefaultParserOptions(),
   ) {
     this.options = normalizeParserOptions(options);
   }
@@ -62,30 +65,55 @@ export class RoadmapParser {
 
   shouldIgnoreFile(cache: CachedMetadata): boolean {
     const frontmatter = asRecord(cache.frontmatter);
-    return frontmatter !== null && this.isExcludedTemplate(frontmatter);
-  }
+    if (frontmatter === null) {
+      return false;
+    }
 
-  hasMappedSubject(file: TFile, cache: CachedMetadata): boolean {
-    const frontmatter = asRecord(cache.frontmatter);
-    return frontmatter !== null && this.extractSubject(frontmatter, file) !== undefined;
+    const typeEntry = readMappedValue(frontmatter, this.options.propertyKeys.type);
+    if (mapNodeType(typeEntry?.value, this.options.semanticValues) === 'roadmap') {
+      return false;
+    }
+
+    const excludedValues = new Set(
+      this.options.excludedTemplateValues.map(normalizeSemanticValue),
+    );
+    return readValueStrings(typeEntry?.value).some((value) =>
+      excludedValues.has(normalizeSemanticValue(value)),
+    );
   }
 
   parseFile(file: TFile, cache: CachedMetadata, source: string): RoadmapNode[] {
-    const frontmatter = asRecord(cache.frontmatter);
     if (this.shouldIgnoreFile(cache)) {
       return [];
     }
 
-    const inheritedSubject =
-      frontmatter === null ? undefined : this.extractSubject(frontmatter, file);
+    const frontmatter = asRecord(cache.frontmatter);
+    const inheritedSubject = this.readReference(frontmatter, 'subject', file);
+    const inheritedProject = this.readReference(frontmatter, 'project', file);
+    const inheritedSemester = this.readText(frontmatter, 'semester');
     const nodes: RoadmapNode[] = [];
-    const frontmatterNode = this.parseFrontmatterNode(file, frontmatter, inheritedSubject);
+    const frontmatterNode = this.parseFrontmatterNode(
+      file,
+      frontmatter,
+      inheritedSubject,
+      inheritedProject,
+      inheritedSemester,
+    );
 
     if (frontmatterNode !== null) {
       nodes.push(frontmatterNode);
     }
 
-    nodes.push(...this.parseInlineTasks(file, cache, source, inheritedSubject));
+    nodes.push(
+      ...this.parseInlineTasks(
+        file,
+        cache,
+        source,
+        inheritedSubject,
+        inheritedProject,
+        inheritedSemester,
+      ),
+    );
     return nodes;
   }
 
@@ -93,85 +121,81 @@ export class RoadmapParser {
     file: TFile,
     values: FrontmatterValues | null,
     subject: string | undefined,
+    project: string | undefined,
+    semester: string | undefined,
   ): RoadmapNode | null {
-    if (
-      values === null ||
-      !hasRoadmapFrontmatter(values, this.options.subjectPropertyKeys)
-    ) {
+    if (values === null || !hasNodeDefiningFrontmatter(values, this.options.propertyKeys)) {
       return null;
     }
 
-    const candidate: FrontmatterValues = {};
-    addNonEmptyString(candidate, 'title', values['title']);
-    addOption(candidate, 'type', values['type'], NODE_TYPES);
-    addNonEmptyString(candidate, 'semester', values['semester']);
-    addDate(candidate, 'start_date', values['start_date']);
-    addDate(candidate, 'due_date', values['due_date']);
-    addPositiveNumber(candidate, 'duration_buffer', values['duration_buffer']);
-    addOption(candidate, 'priority', values['priority'], PRIORITIES);
-    addOption(candidate, 'status', values['status'], NODE_STATUSES);
-    addWikilink(candidate, 'parent', values['parent']);
-    addWikilinkArray(candidate, 'depends_on', values['depends_on']);
-    addBoolean(candidate, 'hard_dependency', values['hard_dependency']);
+    const typeEntry = readMappedValue(values, this.options.propertyKeys.type);
+    const milestoneEntry = readMappedValue(values, this.options.propertyKeys.milestone);
+    const startEntry = readMappedValue(values, this.options.propertyKeys.startDate);
+    const dueEntry = readMappedValue(values, this.options.propertyKeys.dueDate);
+    const statusEntry = readMappedValue(values, this.options.propertyKeys.status);
+    const priorityEntry = readMappedValue(values, this.options.propertyKeys.priority);
+    const bufferEntry = readMappedValue(values, this.options.propertyKeys.durationBuffer);
+    const hardEntry = readMappedValue(values, this.options.propertyKeys.hardDependency);
+    const title = this.readText(values, 'title');
+    const startDate = readDate(startEntry?.value);
+    const milestoneDate = readDate(milestoneEntry?.value);
+    const dueDate = readDate(dueEntry?.value) ?? milestoneDate;
+    const mappedType = mapNodeType(typeEntry?.value, this.options.semanticValues);
+    const milestoneFlag = readBoolean(milestoneEntry?.value) === true || milestoneDate !== undefined;
+    const type = mappedType ?? (milestoneFlag ? 'milestone' : 'task');
+    const status = mapStatus(statusEntry?.value, this.options.semanticValues) ?? 'todo';
+    const priority =
+      mapPriority(priorityEntry?.value, this.options.semanticValues) ??
+      this.options.defaultPriority;
+    const durationBuffer = readPositiveNumber(bufferEntry?.value) ?? this.options.defaultDurationBuffer;
+    const parent = this.readReference(values, 'parent', file);
+    const dependsOn = this.readReferences(values, 'dependsOn', file);
+    const hardDependency = readBoolean(hardEntry?.value) ?? false;
 
-    const parsed = roadmapNodeFrontmatterSchema.safeParse(candidate);
+    const parsed = roadmapNodeFrontmatterSchema.safeParse({
+      title,
+      type,
+      semester,
+      subject,
+      project,
+      start_date: startDate,
+      due_date: dueDate,
+      duration_buffer: durationBuffer,
+      priority,
+      status,
+      parent,
+      depends_on: dependsOn,
+      hard_dependency: hardDependency,
+    });
     if (!parsed.success) {
       return null;
     }
 
     const data = parsed.data;
-    const startDate = data.start_date;
-    const dueDate = data.due_date;
-
     return {
       id: file.path,
       path: file.path,
       title: data.title ?? file.basename,
       type: data.type,
       semester: data.semester,
-      subject,
-      startDate,
-      dueDate,
+      subject: data.subject,
+      project: data.project,
+      startDate: data.start_date,
+      dueDate: data.due_date,
       durationBuffer: data.duration_buffer,
       priority: data.priority,
       status: data.status,
-      parent: this.resolveWikilink(data.parent, file),
-      dependsOn: data.depends_on
-        .map((link) => this.resolveWikilink(link, file))
-        .filter((link): link is string => link !== undefined),
+      parent: data.parent,
+      dependsOn: data.depends_on,
       hardDependency: data.hard_dependency,
       source: 'frontmatter',
+      completed: data.status === 'done',
+      writeKeys: {
+        startDate: startEntry?.key ?? primaryKey(this.options.propertyKeys.startDate, 'start_date'),
+        dueDate: dueEntry?.key ?? primaryKey(this.options.propertyKeys.dueDate, 'due_date'),
+        status: statusEntry?.key ?? primaryKey(this.options.propertyKeys.status, 'status'),
+      },
     };
-  }
-
-  private isExcludedTemplate(values: FrontmatterValues): boolean {
-    const propertyKey = this.options.templatePropertyKey;
-    if (propertyKey.length === 0 || this.options.excludedTemplateValues.length === 0) {
-      return false;
-    }
-
-    const excludedValues = new Set(
-      this.options.excludedTemplateValues.map(normalizeComparisonValue),
-    );
-    return readFrontmatterStrings(values[propertyKey]).some((value) =>
-      excludedValues.has(normalizeComparisonValue(value)),
-    );
-  }
-
-  private extractSubject(values: FrontmatterValues, file: TFile): string | undefined {
-    for (const propertyKey of this.options.subjectPropertyKeys) {
-      const value = readFrontmatterStrings(values[propertyKey])[0];
-      if (value === undefined) {
-        continue;
-      }
-
-      if (wikilinkSchema.safeParse(value).success) {
-        return this.resolveWikilink(value, file) ?? value;
-      }
-      return value;
-    }
-
-    return undefined;
   }
 
   private parseInlineTasks(
@@ -179,13 +203,15 @@ export class RoadmapParser {
     cache: CachedMetadata,
     source: string,
     inheritedSubject: string | undefined,
+    inheritedProject: string | undefined,
+    inheritedSemester: string | undefined,
   ): RoadmapNode[] {
-    if (inheritedSubject === undefined) {
+    if (source.length === 0) {
       return [];
     }
 
     const lines = source.split(/\r?\n/u);
-    const tasks = cache.listItems?.filter((item) => item.task === ' ') ?? [];
+    const tasks = cache.listItems?.filter((item) => item.task !== undefined) ?? [];
     const nodes: RoadmapNode[] = [];
 
     for (const task of tasks) {
@@ -196,66 +222,183 @@ export class RoadmapParser {
       }
 
       const matchedTask = INLINE_TASK_PATTERN.exec(line);
-      if (matchedTask === null) {
-        continue;
-      }
-
-      const taskBody = matchedTask[1];
+      const taskBody = matchedTask?.[2];
       if (taskBody === undefined) {
         continue;
       }
 
-      const subject = readWikilinkProperty(taskBody, SUBJECT_PROPERTY_PATTERN);
-      const startDate = readDateProperty(taskBody, START_PROPERTY_PATTERN);
-      const dueDate = readDateProperty(taskBody, DUE_PROPERTY_PATTERN);
-      const priority = readPriorityProperty(taskBody);
+      const inlineProperties = extractInlineProperties(taskBody);
+      const startDate = readDate(this.readInlineValue(inlineProperties, 'startDate'));
+      const milestoneDate = readDate(this.readInlineValue(inlineProperties, 'milestone'));
+      const dueDate = readDate(this.readInlineValue(inlineProperties, 'dueDate')) ?? milestoneDate;
+      const priority =
+        mapPriority(
+          this.readInlineValue(inlineProperties, 'priority'),
+          this.options.semanticValues,
+        ) ?? this.options.defaultPriority;
+      const explicitStatus = mapStatus(
+        this.readInlineValue(inlineProperties, 'status'),
+        this.options.semanticValues,
+      );
+      const completed = isCompletedTaskMarker(task.task ?? matchedTask?.[1] ?? ' ');
+      const status = taskStatus(completed, explicitStatus, startDate, dueDate);
+      const subject = this.resolveReference(
+        readValueStrings(this.readInlineValue(inlineProperties, 'subject'))[0],
+        file,
+      ) ?? inheritedSubject;
+      const project = this.resolveReference(
+        readValueStrings(this.readInlineValue(inlineProperties, 'project'))[0],
+        file,
+      ) ?? inheritedProject;
       const matchedBlockId = BLOCK_ID_PATTERN.exec(taskBody);
       const blockId = task.id ?? matchedBlockId?.[1];
-
-      const title = taskBody
-        .replace(INLINE_PROPERTY_PATTERN, '')
-        .replace(BLOCK_ID_PATTERN, '')
-        .replace(/\\?[*_#]+/gu, '')
-        .replace(/\s+/gu, ' ')
-        .trim();
+      const title = stripMarkdownTaskTitle(taskBody);
       if (title.length === 0) {
         continue;
       }
 
-      const nodeId = blockId === undefined ? `${file.path}#L${lineNumber + 1}` : `${file.path}#^${blockId}`;
+      const nodeId =
+        blockId === undefined
+          ? `${file.path}#L${lineNumber + 1}`
+          : `${file.path}#^${blockId}`;
       nodes.push({
         id: nodeId,
         path: file.path,
         title,
-        type: 'task',
-        subject: this.resolveWikilink(subject, file) ?? inheritedSubject,
+        type: milestoneDate !== undefined ? 'milestone' : 'task',
+        semester: inheritedSemester,
+        subject,
+        project,
         startDate,
         dueDate,
-        durationBuffer: 1.3,
-        priority: priority ?? 'medium',
-        status: startDate !== undefined && dueDate !== undefined ? 'todo' : 'unscheduled',
+        durationBuffer: this.options.defaultDurationBuffer,
+        priority,
+        status,
         dependsOn: [],
-        hardDependency: false,
+        hardDependency:
+          readBoolean(this.readInlineValue(inlineProperties, 'hardDependency')) ?? false,
         source: 'inline',
         blockId,
+        sourceLine: lineNumber,
+        completed,
+        writeKeys: {
+          startDate: primaryKey(this.options.propertyKeys.startDate, 'start'),
+          dueDate: primaryKey(this.options.propertyKeys.dueDate, 'due'),
+          status: primaryKey(this.options.propertyKeys.status, 'status'),
+        },
       });
     }
 
     return nodes;
   }
 
-  private resolveWikilink(wikilink: string | undefined, sourceFile: TFile): string | undefined {
-    if (wikilink === undefined) {
+  private readText(
+    values: FrontmatterValues | null,
+    field: CanonicalPropertyField,
+  ): string | undefined {
+    if (values === null) {
+      return undefined;
+    }
+    return readValueStrings(readMappedValue(values, this.options.propertyKeys[field])?.value)[0];
+  }
+
+  private readReference(
+    values: FrontmatterValues | null,
+    field: CanonicalPropertyField,
+    file: TFile,
+  ): string | undefined {
+    return this.resolveReference(this.readText(values, field), file);
+  }
+
+  private readReferences(
+    values: FrontmatterValues,
+    field: CanonicalPropertyField,
+    file: TFile,
+  ): string[] {
+    const entry = readMappedValue(values, this.options.propertyKeys[field]);
+    return readValueStrings(entry?.value)
+      .map((value) => this.resolveReference(value, file))
+      .filter((value): value is string => value !== undefined);
+  }
+
+  private readInlineValue(
+    properties: InlineProperties,
+    field: CanonicalPropertyField,
+  ): string | undefined {
+    for (const key of this.options.propertyKeys[field]) {
+      const entry = properties.get(normalizeSemanticValue(key).replace(/-/gu, ''));
+      if (entry !== undefined) {
+        return entry.value;
+      }
+    }
+    return undefined;
+  }
+
+  private resolveReference(value: string | undefined, sourceFile: TFile): string | undefined {
+    if (value === undefined) {
       return undefined;
     }
 
-    const linkpath = wikilink.slice(2, -2).split('|', 1)[0]?.split('#', 1)[0]?.trim();
+    const trimmed = value.trim();
+    const wikilink = /^\[\[([^\]]+)\]\]$/u.exec(trimmed);
+    if (wikilink === null) {
+      return trimmed.length > 0 ? trimmed : undefined;
+    }
+
+    const linkpath = wikilink[1]?.split('|', 1)[0]?.split('#', 1)[0]?.trim();
     if (linkpath === undefined || linkpath.length === 0) {
       return undefined;
     }
 
-    return this.metadataCache.getFirstLinkpathDest(linkpath, sourceFile.path)?.path;
+    return this.metadataCache.getFirstLinkpathDest(linkpath, sourceFile.path)?.path ?? trimmed;
   }
+}
+
+export function isCompletedTaskMarker(marker: string): boolean {
+  return marker.trim().toLocaleLowerCase() === 'x';
+}
+
+export function stripMarkdownTaskTitle(taskBody: string): string {
+  return taskBody
+    .replace(INLINE_PROPERTY_PATTERN, '')
+    .replace(BLOCK_ID_PATTERN, '')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/gu, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/gu, '$1')
+    .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/gu, '$2')
+    .replace(/\[\[([^\]]+)\]\]/gu, '$1')
+    .replace(/\\?[*_#~`]+/gu, '')
+    .replace(/\s+/gu, ' ')
+    .trim();
+}
+
+function taskStatus(
+  completed: boolean,
+  explicitStatus: NodeStatus | undefined,
+  startDate: string | undefined,
+  dueDate: string | undefined,
+): NodeStatus {
+  if (completed) {
+    return 'done';
+  }
+  if (explicitStatus === 'in-progress' || explicitStatus === 'todo') {
+    return explicitStatus;
+  }
+  if (explicitStatus === 'unscheduled') {
+    return 'unscheduled';
+  }
+  return startDate === undefined && dueDate === undefined ? 'unscheduled' : 'todo';
+}
+
+function extractInlineProperties(taskBody: string): InlineProperties {
+  const properties = new Map<string, { readonly key: string; readonly value: string }>();
+  for (const match of taskBody.matchAll(INLINE_PROPERTY_PATTERN)) {
+    const key = match[1]?.trim();
+    const value = match[2]?.trim();
+    if (key !== undefined && value !== undefined) {
+      properties.set(normalizeSemanticValue(key).replace(/-/gu, ''), { key, value });
+    }
+  }
+  return properties;
 }
 
 function asRecord(value: unknown): FrontmatterValues | null {
@@ -264,123 +407,78 @@ function asRecord(value: unknown): FrontmatterValues | null {
     : null;
 }
 
-function hasRoadmapFrontmatter(
+function hasNodeDefiningFrontmatter(
   values: FrontmatterValues,
-  subjectPropertyKeys: readonly string[],
+  propertyKeys: PropertyKeyMap,
 ): boolean {
-  return Object.keys(values).some(
-    (key) => ROADMAP_FRONTMATTER_KEYS.has(key) || subjectPropertyKeys.includes(key),
-  );
+  const definingFields: readonly CanonicalPropertyField[] = [
+    'type',
+    'status',
+    'priority',
+    'startDate',
+    'dueDate',
+    'milestone',
+    'durationBuffer',
+    'parent',
+    'dependsOn',
+    'hardDependency',
+  ];
+  return definingFields.some((field) => readMappedValue(values, propertyKeys[field]) !== undefined);
 }
 
 function normalizeParserOptions(options: RoadmapParserOptions): RoadmapParserOptions {
+  const propertyKeys = {} as Record<CanonicalPropertyField, readonly string[]>;
+  for (const field of Object.keys(options.propertyKeys) as CanonicalPropertyField[]) {
+    propertyKeys[field] = uniqueNonEmptyValues(options.propertyKeys[field]);
+  }
+
   return {
-    subjectPropertyKeys: uniqueNonEmptyValues(options.subjectPropertyKeys),
-    templatePropertyKey: options.templatePropertyKey.trim(),
-    excludedTemplateValues: uniqueNonEmptyValues(options.excludedTemplateValues),
+    propertyKeys,
+    semanticValues: options.semanticValues,
+    excludedTemplateValues: uniqueNonEmptyValues(options.excludedTemplateValues).filter(
+      (value) => normalizeSemanticValue(value) !== normalizeSemanticValue('roadmapa'),
+    ),
+    defaultDurationBuffer:
+      Number.isFinite(options.defaultDurationBuffer) && options.defaultDurationBuffer > 0
+        ? options.defaultDurationBuffer
+        : 1.3,
+    defaultPriority: options.defaultPriority,
   };
 }
 
-function uniqueNonEmptyValues(values: readonly string[]): string[] {
-  return Array.from(
-    new Set(values.map((value) => value.trim()).filter((value) => value.length > 0)),
-  );
+function primaryKey(keys: readonly string[], fallback: string): string {
+  return keys[0] ?? fallback;
 }
 
-function readFrontmatterStrings(value: unknown): string[] {
-  const values = Array.isArray(value) ? value : [value];
-  return values
-    .map((entry) =>
-      typeof entry === 'string'
-        ? entry.trim()
-        : typeof entry === 'number'
-          ? String(entry)
-          : '',
-    )
-    .filter((entry) => entry.length > 0);
+function readDate(value: unknown): string | undefined {
+  const candidate = value instanceof Date ? value.toISOString().slice(0, 10) : readValueStrings(value)[0];
+  return candidate !== undefined && dateIsValid(candidate) ? candidate : undefined;
 }
 
-function normalizeComparisonValue(value: string): string {
-  return value.trim().toLocaleLowerCase();
+function readPositiveNumber(value: unknown): number | undefined {
+  const candidate = typeof value === 'number' ? value : Number(readValueStrings(value)[0]);
+  return Number.isFinite(candidate) && candidate > 0 ? candidate : undefined;
 }
 
-function addNonEmptyString(target: FrontmatterValues, key: string, value: unknown): void {
-  if (typeof value === 'string' && value.trim().length > 0) {
-    target[key] = value.trim();
-  }
-}
-
-function addDate(target: FrontmatterValues, key: string, value: unknown): void {
-  const candidate = value instanceof Date ? value.toISOString().slice(0, 10) : value;
-  if (typeof candidate === 'string') {
-    target[key] = candidate.trim();
-  }
-}
-
-function addPositiveNumber(target: FrontmatterValues, key: string, value: unknown): void {
-  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
-    target[key] = value;
-  }
-}
-
-function addBoolean(target: FrontmatterValues, key: string, value: unknown): void {
+function readBoolean(value: unknown): boolean | undefined {
   if (typeof value === 'boolean') {
-    target[key] = value;
+    return value;
   }
-}
-
-function addOption<const T extends readonly string[]>(
-  target: FrontmatterValues,
-  key: string,
-  value: unknown,
-  options: T,
-): void {
-  if (typeof value === 'string' && options.includes(value)) {
-    target[key] = value;
+  const normalized = normalizeSemanticValue(readValueStrings(value)[0] ?? '');
+  if (['true', 'yes', '1', 'ano'].includes(normalized)) {
+    return true;
   }
-}
-
-function addWikilink(target: FrontmatterValues, key: string, value: unknown): void {
-  if (typeof value === 'string' && wikilinkSchema.safeParse(value.trim()).success) {
-    target[key] = value.trim();
+  if (['false', 'no', '0', 'nie'].includes(normalized)) {
+    return false;
   }
-}
-
-function addWikilinkArray(target: FrontmatterValues, key: string, value: unknown): void {
-  const sourceValues = Array.isArray(value) ? value : typeof value === 'string' ? [value] : [];
-  const wikilinks = sourceValues.filter(
-    (entry): entry is string =>
-      typeof entry === 'string' && wikilinkSchema.safeParse(entry.trim()).success,
-  );
-
-  if (wikilinks.length > 0) {
-    target[key] = wikilinks.map((link) => link.trim());
-  }
-}
-
-function readWikilinkProperty(taskBody: string, pattern: RegExp): string | undefined {
-  const value = pattern.exec(taskBody)?.[1]?.trim();
-  return value !== undefined && wikilinkSchema.safeParse(value).success ? value : undefined;
-}
-
-function readDateProperty(taskBody: string, pattern: RegExp): string | undefined {
-  const value = pattern.exec(taskBody)?.[1]?.trim();
-  return value !== undefined && dateIsValid(value) ? value : undefined;
-}
-
-function readPriorityProperty(taskBody: string): Priority | undefined {
-  const value = PRIORITY_PROPERTY_PATTERN.exec(taskBody)?.[1]?.trim();
-  return value !== undefined && PRIORITIES.includes(value as Priority)
-    ? (value as Priority)
-    : undefined;
+  return undefined;
 }
 
 function dateIsValid(value: string): boolean {
-  const [yearValue, monthValue, dayValue] = value.split('-');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(value)) {
     return false;
   }
-
+  const [yearValue, monthValue, dayValue] = value.split('-');
   const year = Number(yearValue);
   const month = Number(monthValue);
   const day = Number(dayValue);

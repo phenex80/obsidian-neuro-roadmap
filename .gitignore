@@ -6,6 +6,7 @@ dist/
 coverage/
 .vitest/
 benchmark-results/
+.test-build/
 *.log
 
 .DS_Store

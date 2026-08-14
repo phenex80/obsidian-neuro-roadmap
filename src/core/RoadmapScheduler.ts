@@ -5,6 +5,7 @@ import type { RoadmapNode } from '../types';
 import {
   appendScratchpadText,
   createRoadmapNote,
+  updateMarkdownTaskCompletion,
   updateNodeDates,
   updateNodeDatesBatch,
 } from '../utils/obsidianHelpers';
@@ -36,5 +37,15 @@ export class RoadmapScheduler {
 
   async appendScratchpad(node: RoadmapNode, text: string): Promise<void> {
     await appendScratchpadText(this.app, node, text);
+  }
+
+  async setTaskCompletion(node: RoadmapNode, completed: boolean): Promise<boolean> {
+    return updateMarkdownTaskCompletion(this.app, node, completed);
+  }
+
+  async openSource(node: RoadmapNode): Promise<void> {
+    const linktext =
+      node.blockId === undefined ? node.path : `${node.path}#^${node.blockId}`;
+    await this.app.workspace.openLinkText(linktext, node.path, false);
   }
 }
