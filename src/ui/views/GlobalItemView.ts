@@ -34,6 +34,9 @@ export class GlobalItemView extends ItemView {
         app: this.app,
         indexer: this.plugin.indexer,
         scheduler: this.plugin.scheduler,
+        enableColorCoding: this.plugin.settings.enableColorCoding,
+        subscribeColorCoding: (listener: (enabled: boolean) => void) =>
+          this.plugin.subscribeSettings((settings) => listener(settings.enableColorCoding)),
       },
     });
   }

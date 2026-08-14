@@ -14,8 +14,17 @@
     app,
     indexer,
     scheduler,
-  }: { app: App; indexer: RoadmapIndexer; scheduler: RoadmapScheduler } = $props();
+    enableColorCoding: initialEnableColorCoding,
+    subscribeColorCoding,
+  }: {
+    app: App;
+    indexer: RoadmapIndexer;
+    scheduler: RoadmapScheduler;
+    enableColorCoding: boolean;
+    subscribeColorCoding: (listener: (enabled: boolean) => void) => () => void;
+  } = $props();
   let nodes = $state<readonly RoadmapNode[]>([]);
+  let enableColorCoding = $state(false);
   let semester = $state('all');
   let selectedSubjects = $state<string[]>([]);
   let priority = $state<'all' | 'high' | 'medium' | 'low'>('all');
@@ -54,12 +63,21 @@
     ),
   );
 
-  onMount(() =>
-    indexer.subscribe((updatedNodes) => {
+  onMount(() => {
+    enableColorCoding = initialEnableColorCoding;
+    const unsubscribeIndexer = indexer.subscribe((updatedNodes) => {
       nodes = updatedNodes;
       circularDependencyCycles = indexer.getCircularDependencyCycles();
-    }),
-  );
+    });
+    const unsubscribeColorCoding = subscribeColorCoding((enabled) => {
+      enableColorCoding = enabled;
+    });
+
+    return () => {
+      unsubscribeIndexer();
+      unsubscribeColorCoding();
+    };
+  });
 
   function openScratchpad(node: RoadmapNode): void {
     scratchpadNode = node;
@@ -174,16 +192,17 @@
         <GanttCanvas
           nodes={filteredNodes}
           {scale}
+          {enableColorCoding}
           onReschedule={(node, startDate, dueDate) => scheduler.rescheduleNode(node, startDate, dueDate)}
           onSchedule={(node, startDate, dueDate) => scheduler.scheduleUnscheduledNode(node, startDate, dueDate)}
           onCreate={(startDate, dueDate) => scheduler.createNode(startDate, dueDate)}
           onEdit={openScratchpad}
         />
       {:else}
-        <HorizonBoard nodes={filteredNodes} onEdit={openScratchpad} />
+        <HorizonBoard nodes={filteredNodes} {enableColorCoding} onEdit={openScratchpad} />
       {/if}
     </div>
-    <UnscheduledDrawer nodes={filteredNodes} onEdit={openScratchpad} />
+    <UnscheduledDrawer nodes={filteredNodes} {enableColorCoding} onEdit={openScratchpad} />
   </div>
 </main>
 

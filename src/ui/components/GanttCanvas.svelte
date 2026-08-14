@@ -5,6 +5,7 @@
   let {
     nodes,
     scale,
+    enableColorCoding,
     onReschedule,
     onSchedule,
     onCreate,
@@ -12,6 +13,7 @@
   }: {
     nodes: readonly RoadmapNode[];
     scale: 'days' | 'weeks' | 'months';
+    enableColorCoding: boolean;
     onReschedule: (node: RoadmapNode, startDate: string, dueDate: string) => Promise<void>;
     onSchedule: (node: RoadmapNode, startDate: string, dueDate: string) => Promise<void>;
     onCreate: (startDate: string, dueDate: string) => Promise<void>;
@@ -416,6 +418,7 @@
           {#each timelineNodes as item (item.node.id)}
             <button
               class={`timeline-pill status-${item.node.status} ${item.node.hardDependency ? 'hard-dependency' : 'soft-dependency'}`}
+              class:color-coded={enableColorCoding}
               class:dragging={draggedNode?.id === item.node.id}
               style={`grid-column: ${item.startColumn} / span ${item.spanColumns}; grid-row: ${item.row}`}
               title={item.node.title}
@@ -617,8 +620,8 @@
     overflow: hidden;
     border: 1px solid var(--background-modifier-border);
     border-radius: var(--radius-l);
-    background: var(--interactive-accent);
-    color: var(--text-on-accent);
+    background: var(--background-secondary);
+    color: var(--text-normal);
     font-size: var(--font-ui-small);
     box-shadow: var(--shadow-s);
     cursor: grab;
@@ -635,23 +638,18 @@
     opacity: var(--dimmed);
   }
 
-  .timeline-pill.status-todo {
+  .timeline-pill.color-coded.status-todo {
     background-color: var(--status-todo);
     color: white;
   }
 
-  .timeline-pill.status-in-progress {
+  .timeline-pill.color-coded.status-in-progress {
     background-color: var(--status-in-progress);
     color: white;
   }
 
-  .timeline-pill.status-done {
+  .timeline-pill.color-coded.status-done {
     background-color: var(--status-done);
-    color: white;
-  }
-
-  .timeline-pill.status-unscheduled {
-    background-color: var(--interactive-accent);
     color: white;
   }
 

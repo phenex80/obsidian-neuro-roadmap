@@ -60,6 +60,7 @@ export const inlineTaskSchema = z.object({
 export const roadmapSettingsSchema = z.object({
   defaultDurationBuffer: z.number().finite().positive().default(1.3),
   defaultPriority: z.enum(PRIORITIES).default('medium'),
+  enableColorCoding: z.boolean().default(true),
 });
 
 export type NodeType = z.infer<typeof roadmapNodeFrontmatterSchema>['type'];

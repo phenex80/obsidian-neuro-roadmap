@@ -6,9 +6,11 @@
 
   let {
     nodes,
+    enableColorCoding,
     onEdit,
   }: {
     nodes: readonly RoadmapNode[];
+    enableColorCoding: boolean;
     onEdit: (node: RoadmapNode) => void;
   } = $props();
 
@@ -74,14 +76,15 @@
           {#each columns[column] as node (node.id)}
             <button
               type="button"
-              class="roadmap-card"
+              class={`roadmap-card status-${node.status}`}
+              class:color-coded={enableColorCoding}
               title={node.path}
               ondblclick={() => onEdit(node)}
               onkeydown={(event) => onCardKeyDown(event, node)}
             >
-              <span class="card-title">
-                {node.title || (node.path ? node.path.split('/').pop()?.replace('.md', '') : undefined) || 'Neznáma úloha'}
-              </span>
+              <strong class="card-title">
+                {node.title ? node.title : (node.path ? (node.path.split('/').pop()?.replace('.md', '') ?? 'Neznáma úloha') : 'Neznáma úloha')}
+              </strong>
               <span class="metadata-row">
                 <span class={`metadata-badge status-badge status-${node.status}`}>{formatLabel(node.status)}</span>
                 <span class={`metadata-badge priority-badge priority-${node.priority}`}>
@@ -175,6 +178,18 @@
     white-space: nowrap;
   }
 
+  .roadmap-card.color-coded.status-todo {
+    border-inline-start-color: var(--status-todo);
+  }
+
+  .roadmap-card.color-coded.status-in-progress {
+    border-inline-start-color: var(--status-in-progress);
+  }
+
+  .roadmap-card.color-coded.status-done {
+    border-inline-start-color: var(--status-done);
+  }
+
   .metadata-row {
     display: flex;
     flex-wrap: wrap;
@@ -194,32 +209,32 @@
     font-size: var(--font-ui-smaller);
   }
 
-  .status-badge.status-todo {
+  .color-coded .status-badge.status-todo {
     background: var(--status-todo);
     color: white;
   }
 
-  .status-badge.status-in-progress {
+  .color-coded .status-badge.status-in-progress {
     background: var(--status-in-progress);
     color: white;
   }
 
-  .status-badge.status-done {
+  .color-coded .status-badge.status-done {
     background: var(--status-done);
     color: white;
   }
 
-  .priority-badge.priority-high {
+  .color-coded .priority-badge.priority-high {
     background: var(--priority-high);
     color: white;
   }
 
-  .priority-badge.priority-medium {
+  .color-coded .priority-badge.priority-medium {
     background: var(--priority-medium);
     color: white;
   }
 
-  .priority-badge.priority-low {
+  .color-coded .priority-badge.priority-low {
     background: var(--priority-low);
     color: var(--text-normal);
   }

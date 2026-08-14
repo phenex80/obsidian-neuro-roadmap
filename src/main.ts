@@ -11,11 +11,13 @@ import { GlobalItemView, VIEW_TYPE_NEURO_ROADMAP } from './ui/views/GlobalItemVi
 import { registerRoadmapCodeblockProcessor } from './ui/processors/CodeblockProcessor';
 
 const DEFAULT_SETTINGS: RoadmapSettings = roadmapSettingsSchema.parse({});
+type SettingsListener = (settings: Readonly<RoadmapSettings>) => void;
 
 export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
   settings: RoadmapSettings = DEFAULT_SETTINGS;
   readonly indexer = new RoadmapIndexer(this.app);
   readonly scheduler = new RoadmapScheduler(this.app, this.indexer);
+  private readonly settingsListeners = new Set<SettingsListener>();
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -37,6 +39,7 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
   }
 
   onunload(): void {
+    this.settingsListeners.clear();
     this.indexer.clear();
   }
 
@@ -49,6 +52,17 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
   async saveSettings(): Promise<void> {
     this.settings = roadmapSettingsSchema.parse(this.settings);
     await this.saveData(this.settings);
+    for (const listener of this.settingsListeners) {
+      listener(this.settings);
+    }
+  }
+
+  subscribeSettings(listener: SettingsListener): () => void {
+    this.settingsListeners.add(listener);
+    listener(this.settings);
+    return () => {
+      this.settingsListeners.delete(listener);
+    };
   }
 
   private async activateRoadmapView(): Promise<void> {
@@ -71,6 +85,18 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     containerEl.createEl('h2', { text: 'Neuro-Adaptive Roadmap settings' });
+
+    new Setting(containerEl)
+      .setName('Enable color coding')
+      .setDesc('Use Monday.com status colors for tasks and cards across views.')
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.enableColorCoding)
+          .onChange(async (value) => {
+            this.plugin.settings.enableColorCoding = value;
+            await this.plugin.saveSettings();
+          }),
+      );
 
     new Setting(containerEl)
       .setName('Default duration buffer')
