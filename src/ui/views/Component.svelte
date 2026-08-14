@@ -4,6 +4,8 @@
   import type { RoadmapNode } from '../../types';
   import type { RoadmapIndexer } from '../../core/Indexer';
   import type { RoadmapScheduler } from '../../core/RoadmapScheduler';
+  import { exportToICS } from '../../utils/icsExport';
+  import DashboardView from '../components/DashboardView.svelte';
   import GanttCanvas from '../components/GanttCanvas.svelte';
   import HorizonBoard from '../components/HorizonBoard.svelte';
   import UnscheduledDrawer from '../components/UnscheduledDrawer.svelte';
@@ -28,7 +30,7 @@
   let semester = $state('all');
   let selectedSubjects = $state<string[]>([]);
   let priority = $state<'all' | 'high' | 'medium' | 'low'>('all');
-  let viewMode = $state<'gantt' | 'horizon'>('gantt');
+  let viewMode = $state<'dashboard' | 'gantt' | 'horizon'>('dashboard');
   let scale = $state<'days' | 'weeks' | 'months'>('days');
   let scratchpadNode = $state<RoadmapNode | null>(null);
   let circularDependencyCycles = $state<readonly (readonly string[])[]>([]);
@@ -97,6 +99,24 @@
   async function appendScratchpad(text: string): Promise<void> {
     if (scratchpadNode !== null) {
       await scheduler.appendScratchpad(scratchpadNode, text);
+    }
+  }
+
+  function downloadCalendar(): void {
+    const calendar = exportToICS([...filteredNodes]);
+    const blob = new Blob([calendar], { type: 'text/calendar' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'roadmap-export.ics';
+    anchor.hidden = true;
+    document.body.appendChild(anchor);
+
+    try {
+      anchor.click();
+    } finally {
+      anchor.remove();
+      URL.revokeObjectURL(url);
     }
   }
 </script>
@@ -171,6 +191,9 @@
     <div class="control-group view-control">
       <span class="control-label">View</span>
       <div class="segmented-control" aria-label="Roadmap view mode">
+        <button class:active={viewMode === 'dashboard'} aria-pressed={viewMode === 'dashboard'} onclick={() => (viewMode = 'dashboard')}>
+          Dashboard
+        </button>
         <button class:active={viewMode === 'gantt'} aria-pressed={viewMode === 'gantt'} onclick={() => (viewMode = 'gantt')}>
           Gantt
         </button>
@@ -180,6 +203,8 @@
       </div>
     </div>
 
+    <button type="button" class="export-button" onclick={downloadCalendar}>Export (.ics)</button>
+
   </header>
 
   <div class="notice-slot">
@@ -188,7 +213,9 @@
 
   <div class="roadmap-layout">
     <div class="main-panel">
-      {#if viewMode === 'gantt'}
+      {#if viewMode === 'dashboard'}
+        <DashboardView nodes={filteredNodes} />
+      {:else if viewMode === 'gantt'}
         <GanttCanvas
           nodes={filteredNodes}
           {scale}
@@ -390,6 +417,23 @@
 
   .view-control {
     margin-inline-start: auto;
+  }
+
+  .export-button {
+    padding: var(--size-2-2) var(--size-4-2);
+    border: var(--border-width) solid var(--border-color);
+    border-radius: var(--radius-m);
+    background: var(--background-secondary);
+    color: var(--text-muted);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .export-button:hover,
+  .export-button:focus-visible {
+    border-color: var(--interactive-accent);
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
   }
 
   .roadmap-layout {
