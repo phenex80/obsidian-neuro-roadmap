@@ -60,9 +60,19 @@ export class RoadmapParser {
     this.options = normalizeParserOptions(options);
   }
 
+  shouldIgnoreFile(cache: CachedMetadata): boolean {
+    const frontmatter = asRecord(cache.frontmatter);
+    return frontmatter !== null && this.isExcludedTemplate(frontmatter);
+  }
+
+  hasMappedSubject(file: TFile, cache: CachedMetadata): boolean {
+    const frontmatter = asRecord(cache.frontmatter);
+    return frontmatter !== null && this.extractSubject(frontmatter, file) !== undefined;
+  }
+
   parseFile(file: TFile, cache: CachedMetadata, source: string): RoadmapNode[] {
     const frontmatter = asRecord(cache.frontmatter);
-    if (frontmatter !== null && this.isExcludedTemplate(frontmatter)) {
+    if (this.shouldIgnoreFile(cache)) {
       return [];
     }
 
@@ -170,6 +180,10 @@ export class RoadmapParser {
     source: string,
     inheritedSubject: string | undefined,
   ): RoadmapNode[] {
+    if (inheritedSubject === undefined) {
+      return [];
+    }
+
     const lines = source.split(/\r?\n/u);
     const tasks = cache.listItems?.filter((item) => item.task === ' ') ?? [];
     const nodes: RoadmapNode[] = [];
@@ -201,6 +215,7 @@ export class RoadmapParser {
       const title = taskBody
         .replace(INLINE_PROPERTY_PATTERN, '')
         .replace(BLOCK_ID_PATTERN, '')
+        .replace(/[*_#]+/gu, '')
         .replace(/\s+/gu, ' ')
         .trim();
       if (title.length === 0) {

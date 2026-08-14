@@ -80,8 +80,13 @@
 
 <style>
   .unscheduled-drawer {
+    display: flex !important;
+    max-height: calc(100vh - 200px) !important;
+    box-sizing: border-box;
+    flex-direction: column !important;
     align-self: start;
     padding: var(--size-4-3);
+    overflow-y: auto !important;
     border: var(--border-width) solid var(--border-color);
     border-radius: var(--radius-m);
     background: var(--background-secondary);
@@ -89,6 +94,7 @@
 
   header {
     display: flex;
+    flex: 0 0 auto;
     justify-content: space-between;
     align-items: center;
     margin-bottom: var(--size-4-2);
@@ -111,8 +117,12 @@
 
   ul {
     display: grid;
+    min-height: 0;
+    flex: 1 1 auto;
     gap: var(--size-4-2);
     padding: 0;
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
     list-style: none;
   }
 

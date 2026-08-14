@@ -157,7 +157,14 @@ export class RoadmapIndexer {
       return;
     }
 
-    const source = await this.readSourceForInlineTasks(file, cache);
+    if (this.parser.shouldIgnoreFile(cache)) {
+      this.removePath(path, emitChange);
+      return;
+    }
+
+    const source = this.parser.hasMappedSubject(file, cache)
+      ? await this.readSourceForInlineTasks(file, cache)
+      : '';
     if (this.revisionsByPath.get(path) !== revision || file.path !== path) {
       return;
     }
