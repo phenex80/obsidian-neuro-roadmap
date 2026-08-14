@@ -51,6 +51,9 @@
   let timelineStart = $derived(scheduledNodes[0]?.startDate ?? today());
   let timelineEnd = $derived(calculateTimelineEnd(scheduledNodes) ?? addDays(timelineStart, minimumDayCount - 1));
   let dayCount = $derived(Math.max(daysBetween(timelineStart, timelineEnd) + 1, minimumDayCount));
+  let todayIndex = $derived(daysBetween(timelineStart, today()));
+  let todayColumn = $derived(todayIndex + 1);
+  let isTodayVisible = $derived(todayIndex >= 0 && todayIndex < dayCount);
   let populatedRowCount = $derived(swimlanes.reduce((total, lane) => total + lane.nodes.length + 1, 0));
   let rowCount = $derived(Math.max(populatedRowCount, EMPTY_ROW_COUNT));
   let dayLabels = $derived(
@@ -161,6 +164,16 @@
 
     const filename = subject.split('/').at(-1) ?? subject;
     return filename.endsWith('.md') ? filename.slice(0, -3) : filename;
+  }
+
+  function getNodeTitle(node: RoadmapNode): string {
+    if (node.title.trim().length > 0) {
+      return node.title;
+    }
+
+    const filename = node.path.split('/').at(-1) ?? '';
+    const basename = filename.endsWith('.md') ? filename.slice(0, -3) : filename;
+    return basename.length > 0 ? basename : 'Neznáma úloha';
   }
 
   function buildHeaderSegments(
@@ -368,7 +381,7 @@
                 title={node.path}
                 ondblclick={() => onEdit(node)}
               >
-                <span>{node.title}</span>
+                <span>{getNodeTitle(node)}</span>
               </button>
             {/each}
           {/each}
@@ -405,6 +418,14 @@
               title={date}
             ></div>
           {/each}
+
+          {#if isTodayVisible}
+            <div
+              class="today-line"
+              style={`grid-column: ${todayColumn}`}
+              aria-hidden="true"
+            ></div>
+          {/if}
 
           {#each rowNumbers as row (row)}
             <div class="row-track" style={`grid-column: 1 / -1; grid-row: ${row}`}></div>
@@ -504,7 +525,11 @@
     border-radius: 0;
     text-align: left;
     background: var(--background-primary);
-    color: var(--text-normal);
+    color: var(--text-normal) !important;
+  }
+
+  .task-list button span {
+    color: var(--text-normal) !important;
   }
 
   .swimlane-label {
@@ -589,6 +614,18 @@
   .day-track.weekend {
     background: var(--background-secondary);
     opacity: var(--dimmed);
+  }
+
+  .today-line {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 5;
+    justify-self: start;
+    width: 2px;
+    background-color: var(--interactive-accent);
+    opacity: 0.7;
+    pointer-events: none;
   }
 
   .row-track {
