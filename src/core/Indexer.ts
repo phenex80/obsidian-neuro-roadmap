@@ -35,6 +35,7 @@ export class RoadmapIndexer {
   async rebuild(): Promise<void> {
     this.resetGraph();
     const files = this.app.vault.getMarkdownFiles();
+    this.parser.setKnownMarkdownPaths(files.map((file) => file.path));
     await Promise.all(files.map(async (file) => this.reindexFile(file, false)));
     this.emitChange();
   }

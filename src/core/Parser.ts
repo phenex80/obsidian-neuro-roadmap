@@ -53,6 +53,7 @@ export function createDefaultParserOptions(): RoadmapParserOptions {
 /** Parses cached Obsidian metadata and Markdown content into canonical roadmap nodes. */
 export class RoadmapParser {
   private options: RoadmapParserOptions;
+  private uniqueMarkdownPathByLinkpath = new Map<string, string>();
 
   constructor(
     private readonly metadataCache: MetadataCache,
@@ -63,6 +64,34 @@ export class RoadmapParser {
 
   setOptions(options: RoadmapParserOptions): void {
     this.options = normalizeParserOptions(options);
+  }
+
+  /** Supplies vault paths so plain-text linkpaths are canonicalized only when unambiguous. */
+  setKnownMarkdownPaths(paths: readonly string[]): void {
+    const candidates = new Map<string, Set<string>>();
+    for (const path of paths) {
+      const normalizedPath = normalizeVaultPath(path);
+      if (!normalizedPath.toLocaleLowerCase().endsWith('.md')) {
+        continue;
+      }
+      const pathWithoutExtension = normalizedPath.slice(0, -3);
+      const basename = pathWithoutExtension.split('/').at(-1);
+      for (const linkpath of [pathWithoutExtension, basename]) {
+        if (linkpath === undefined || linkpath.length === 0) {
+          continue;
+        }
+        const key = normalizeLinkpath(linkpath);
+        const pathsForKey = candidates.get(key) ?? new Set<string>();
+        pathsForKey.add(normalizedPath);
+        candidates.set(key, pathsForKey);
+      }
+    }
+
+    this.uniqueMarkdownPathByLinkpath = new Map(
+      Array.from(candidates.entries())
+        .filter((entry): entry is [string, Set<string>] => entry[1].size === 1)
+        .map(([key, matchingPaths]) => [key, Array.from(matchingPaths)[0]!]),
+    );
   }
 
   shouldIgnoreFile(file: TFile, cache: CachedMetadata): boolean {
@@ -375,7 +404,18 @@ export class RoadmapParser {
     const trimmed = value.trim();
     const wikilink = /^\[\[([^\]]+)\]\]$/u.exec(trimmed);
     if (wikilink === null) {
-      return trimmed.length > 0 ? trimmed : undefined;
+      if (trimmed.length === 0) {
+        return undefined;
+      }
+      const plainLinkpath = trimmed.split('#', 1)[0]?.replace(/\.md$/iu, '').trim();
+      if (plainLinkpath === undefined || plainLinkpath.length === 0) {
+        return trimmed;
+      }
+      const uniquePath = this.uniqueMarkdownPathByLinkpath.get(normalizeLinkpath(plainLinkpath));
+      const resolvedPath = this.metadataCache.getFirstLinkpathDest(plainLinkpath, sourceFile.path)?.path;
+      return uniquePath !== undefined && normalizeVaultPath(resolvedPath ?? '') === uniquePath
+        ? uniquePath
+        : trimmed;
     }
 
     const linkpath = wikilink[1]?.split('|', 1)[0]?.split('#', 1)[0]?.trim();
@@ -478,6 +518,10 @@ function normalizeVaultPath(value: string): string {
     .replace(/\\/gu, '/')
     .replace(/^\.\//u, '')
     .replace(/^\/+|\/+$/gu, '');
+}
+
+function normalizeLinkpath(value: string): string {
+  return value.normalize('NFC').trim().replace(/\.md$/iu, '').toLocaleLowerCase();
 }
 
 function primaryKey(keys: readonly string[], fallback: string): string {

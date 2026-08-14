@@ -139,6 +139,56 @@ test('excluded path prefixes reject frontmatter nodes and inline tasks before pa
   );
 });
 
+test('wikilink and unambiguous plain subject linkpath share one canonical identity', () => {
+  const subjectFile = createFile('Subjects/01 ISKB02 Úvod do knihovníctví.md');
+  const resolvingCache = {
+    getFirstLinkpathDest: (linkpath: string) =>
+      linkpath === '01 ISKB02 Úvod do knihovníctví' ? subjectFile : null,
+  } as unknown as MetadataCache;
+  const parser = new RoadmapParser(resolvingCache, createDefaultParserOptions());
+  parser.setKnownMarkdownPaths([
+    subjectFile.path,
+    'Tasks/Wikilink task.md',
+    'Tasks/Plain task.md',
+  ]);
+
+  const wikilinkNode = parser.parseFile(
+    createFile('Tasks/Wikilink task.md'),
+    createCache({ typ: 'task', predmet: '[[01 ISKB02 Úvod do knihovníctví]]' }, []),
+    '',
+  )[0];
+  const plainNode = parser.parseFile(
+    createFile('Tasks/Plain task.md'),
+    createCache({ typ: 'task', predmet: '01 ISKB02 Úvod do knihovníctví' }, []),
+    '',
+  )[0];
+
+  assert.equal(wikilinkNode?.subject, subjectFile.path);
+  assert.equal(plainNode?.subject, subjectFile.path);
+  assert.equal(new Set([wikilinkNode?.subject, plainNode?.subject]).size, 1);
+});
+
+test('ambiguous plain subject basename remains a distinct plain-text identity', () => {
+  const firstSubject = createFile('Subjects/A/Shared subject.md');
+  const resolvingCache = {
+    getFirstLinkpathDest: () => firstSubject,
+  } as unknown as MetadataCache;
+  const parser = new RoadmapParser(resolvingCache, createDefaultParserOptions());
+  parser.setKnownMarkdownPaths([
+    firstSubject.path,
+    'Subjects/B/Shared subject.md',
+    'Tasks/Task.md',
+  ]);
+
+  const node = parser.parseFile(
+    createFile('Tasks/Task.md'),
+    createCache({ typ: 'task', predmet: 'Shared subject' }, []),
+    '',
+  )[0];
+
+  assert.equal(node?.subject, 'Shared subject');
+});
+
 test('inline tasks inherit subject, semester, and optional project/workstream', () => {
   const parser = new RoadmapParser(metadataCache, createDefaultParserOptions());
   const file = createFile('ISKB02/Semester project.md');
