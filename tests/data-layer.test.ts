@@ -22,6 +22,8 @@ import { DependencyEngine } from '../src/core/DependencyEngine';
 import { RoadmapIndexer } from '../src/core/Indexer';
 import { isCalendarEligible, projectCalendarEvent } from '../src/core/CalendarCore';
 import { CalendarIdentityManager, calendarItemLocator } from '../src/core/CalendarIdentity';
+import { exportCalendarEventsToICS, IcsCalendarProvider } from '../src/calendar/IcsCalendarProvider';
+import type { CalendarEventProjection } from '../src/core/CalendarCore';
 import { buildSubjectSummaries } from '../src/core/DashboardMetrics';
 import { classifyHorizon, formatRelativeTaskDate } from '../src/core/HorizonPlanner';
 import { migrateRoadmapSettingsData } from '../src/core/SettingsMigration';
@@ -181,6 +183,70 @@ test('calendar sync state remains plugin-managed and defaults empty', () => {
   assert.deepEqual(settings.calendarState.itemIdentities, {});
   assert.deepEqual(settings.calendarState.itemOverrides, {});
   assert.deepEqual(settings.calendarState.syncRecords, {});
+});
+
+test('ICS provider emits stable RFC 5545 all-day events with reminders', () => {
+  const event = createCalendarEvent('stable-id', {
+    title: 'ISKB02 · Skúška, časť; A',
+    description: 'Riadok 1\nRiadok 2; čiarka, spätné \\ lomítko',
+    startDate: '2026-10-10',
+    endDateExclusive: '2026-10-11',
+    reminderMinutes: 1440,
+  });
+  const ics = exportCalendarEventsToICS([event], {
+    now: () => new Date('2026-08-15T10:20:30.000Z'),
+  });
+  const unfolded = ics.replace(/\r\n /gu, '');
+
+  assert.ok(ics.endsWith('\r\n'));
+  assert.match(unfolded, /BEGIN:VCALENDAR\r\nVERSION:2\.0\r\n/u);
+  assert.match(unfolded, /UID:stable-id@neuro-roadmap\r\n/u);
+  assert.match(unfolded, /DTSTAMP:20260815T102030Z\r\n/u);
+  assert.match(unfolded, /DTSTART;VALUE=DATE:20261010\r\n/u);
+  assert.match(unfolded, /DTEND;VALUE=DATE:20261011\r\n/u);
+  assert.match(unfolded, /SUMMARY:ISKB02 · Skúška\\, časť\\; A\r\n/u);
+  assert.match(unfolded, /DESCRIPTION:Riadok 1\\nRiadok 2\\; čiarka\\, spätné \\\\ lomítko\r\n/u);
+  assert.match(unfolded, /TRANSP:TRANSPARENT\r\n/u);
+  assert.match(unfolded, /BEGIN:VALARM\r\nTRIGGER:-P1D\r\n/u);
+});
+
+test('ICS output is deterministic, ordered, and Unicode-safe when folded', () => {
+  const options = { now: () => new Date('2026-08-15T10:20:30.000Z') };
+  const events = [
+    createCalendarEvent('later', {
+      title: 'Veľmi dlhý český a slovenský názov skúšky s diakritikou žluťoučký kôň',
+      startDate: '2026-12-10',
+      endDateExclusive: '2026-12-11',
+    }),
+    createCalendarEvent('earlier', {
+      title: 'Prezentácia',
+      startDate: '2026-10-10',
+      endDateExclusive: '2026-10-11',
+    }),
+  ];
+  const first = exportCalendarEventsToICS(events, options);
+  const second = exportCalendarEventsToICS([...events].reverse(), options);
+
+  assert.equal(first, second);
+  assert.ok(first.indexOf('UID:earlier@') < first.indexOf('UID:later@'));
+  for (const line of first.split('\r\n').filter((value) => value.length > 0)) {
+    assert.ok(new TextEncoder().encode(line).length <= 75, line);
+  }
+  assert.match(first.replace(/\r\n /gu, ''), /žluťoučký kôň/u);
+});
+
+test('ICS provider advertises file-only capabilities without remote APIs', async () => {
+  const provider = new IcsCalendarProvider();
+  assert.equal((await provider.initialize()).connected, true);
+  assert.deepEqual(await provider.listCalendars(), []);
+  assert.deepEqual(provider.capabilities, {
+    export: true,
+    remoteCalendars: false,
+    create: false,
+    update: false,
+    delete: false,
+    reminders: true,
+  });
 });
 
 test('roadmap anchor notes contribute inline tasks but are not task nodes', () => {
@@ -729,6 +795,27 @@ function createCalendarOptions(today = '2026-09-01') {
     reminderMinutes: settings.reminderMinutes,
     today,
     vaultName: 'Academic Vault',
+  };
+}
+
+function createCalendarEvent(
+  internalItemId: string,
+  overrides: Partial<CalendarEventProjection> = {},
+): CalendarEventProjection {
+  return {
+    internalItemId,
+    sourceNodeId: internalItemId,
+    semanticType: 'milestone',
+    title: internalItemId,
+    description: 'Managed by Obsidian Neuro Roadmap',
+    startDate: '2026-10-10',
+    endDateExclusive: '2026-10-11',
+    allDay: true,
+    availability: 'free',
+    reminderMinutes: null,
+    completed: false,
+    overdue: false,
+    ...overrides,
   };
 }
 
