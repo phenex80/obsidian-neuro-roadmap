@@ -130,6 +130,7 @@ export const roadmapSettingsSchema = z.object({
   propertyMappings: propertyMappingSchema.default({}),
   valueMappings: semanticValueMappingSchema.default({}),
   excludedTemplateValues: z.string().default('template, šablóna, sablona'),
+  excludedPathPrefixes: z.string().default(''),
   horizonNextDays: z.number().int().min(1).max(90).default(7),
   horizonCriticalDays: z.number().int().min(0).max(30).default(0),
   horizonOverduePreviewLimit: z.number().int().min(1).max(50).default(5),

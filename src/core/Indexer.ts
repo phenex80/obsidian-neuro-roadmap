@@ -180,7 +180,7 @@ export class RoadmapIndexer {
       return;
     }
 
-    if (this.parser.shouldIgnoreFile(cache)) {
+    if (this.parser.shouldIgnoreFile(file, cache)) {
       this.removePath(path, emitChange);
       return;
     }
@@ -197,7 +197,7 @@ export class RoadmapIndexer {
   }
 
   private async readSourceForInlineTasks(file: TFile, cache: CachedMetadata): Promise<string> {
-    if (this.parser.shouldIgnoreFile(cache)) {
+    if (this.parser.shouldIgnoreFile(file, cache)) {
       return '';
     }
 

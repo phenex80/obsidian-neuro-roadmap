@@ -43,7 +43,7 @@ test('semantic status and priority values normalize aliases and diacritics', () 
   assert.equal(mapPriority('vysoká', values), 'high');
 });
 
-test('roadmap anchor notes are indexed while real templates are excluded', () => {
+test('roadmap anchor notes contribute inline tasks but are not task nodes', () => {
   const parser = new RoadmapParser(metadataCache, createDefaultParserOptions());
   const file = createFile('ISKB02/00 Roadmap.md');
   const cache = createCache(
@@ -64,7 +64,7 @@ test('roadmap anchor notes are indexed while real templates are excluded', () =>
   ].join('\n');
 
   const nodes = parser.parseFile(file, cache, source);
-  assert.equal(nodes[0]?.type, 'roadmap');
+  assert.equal(nodes.some((node) => node.source === 'frontmatter'), false);
   assert.equal(nodes.filter((node) => node.source === 'inline').length, 2);
   assert.deepEqual(
     nodes.filter((node) => node.source === 'inline').map((node) => node.status),
@@ -85,6 +85,55 @@ test('roadmap anchor notes are indexed while real templates are excluded', () =>
       createFile('Templates/Subject.md'),
       templateCache,
       '---\ntyp: šablóna\npredmet: ISKB02\n---\n- [ ] Placeholder',
+    ),
+    [],
+  );
+});
+
+test('frontmatter roadmap eligibility rejects generic note types and accepts explicit items', () => {
+  const parser = new RoadmapParser(metadataCache, createDefaultParserOptions());
+  const cases: readonly {
+    readonly name: string;
+    readonly frontmatter: Record<string, unknown>;
+    readonly expectedType?: RoadmapNode['type'];
+  }[] = [
+    { name: 'dashboard', frontmatter: { typ: 'dashboard', stav: 'aktivny' } },
+    { name: 'source', frontmatter: { typ: 'zdroj' } },
+    { name: 'lecture', frontmatter: { typ: 'prednaska', stav: 'prebieha' } },
+    { name: 'task', frontmatter: { typ: 'task' }, expectedType: 'task' },
+    { name: 'project', frontmatter: { typ: 'projekt' }, expectedType: 'project' },
+    { name: 'milestone', frontmatter: { typ: 'milestone' }, expectedType: 'milestone' },
+    { name: 'implicit scheduled item', frontmatter: { typ: 'zdroj', deadline: '2026-11-03' }, expectedType: 'task' },
+  ];
+
+  for (const item of cases) {
+    const nodes = parser.parseFile(
+      createFile(`Notes/${item.name}.md`),
+      createCache(item.frontmatter, []),
+      '',
+    );
+    const frontmatterNode = nodes.find((node) => node.source === 'frontmatter');
+    assert.equal(frontmatterNode?.type, item.expectedType, item.name);
+  }
+});
+
+test('excluded path prefixes reject frontmatter nodes and inline tasks before parsing', () => {
+  const parser = new RoadmapParser(metadataCache, {
+    ...createDefaultParserOptions(),
+    excludedPathPrefixes: ['40 Systém/Šablóny'],
+  });
+  const file = createFile('40 Systém/Šablóny/Prednáška.md');
+  const cache = createCache(
+    { typ: 'task', predmet: 'ISKB02', deadline: '2026-10-10' },
+    [{ line: 4, task: ' ' }],
+  );
+
+  assert.equal(parser.shouldIgnoreFile(file, cache), true);
+  assert.deepEqual(
+    parser.parseFile(
+      file,
+      cache,
+      '---\ntyp: task\npredmet: ISKB02\n---\n- [ ] Sample template task',
     ),
     [],
   );

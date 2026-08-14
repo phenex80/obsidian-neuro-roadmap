@@ -118,6 +118,7 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
       propertyKeys: compilePropertyKeyMap(this.settings.propertyMappings),
       semanticValues: compileSemanticValueMap(this.settings.valueMappings),
       excludedTemplateValues: parseCommaSeparatedValues(this.settings.excludedTemplateValues),
+      excludedPathPrefixes: parsePathPrefixes(this.settings.excludedPathPrefixes),
       defaultDurationBuffer: this.settings.defaultDurationBuffer,
       defaultPriority: this.settings.defaultPriority,
     };
@@ -208,6 +209,19 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.excludedTemplateValues)
           .onChange(async (value) => {
             this.plugin.settings.excludedTemplateValues = value;
+            await this.plugin.saveSettings(true);
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Excluded folders / paths')
+      .setDesc('Comma- or newline-separated vault path prefixes ignored before parsing, including inline tasks.')
+      .addTextArea((text) =>
+        text
+          .setPlaceholder('40 Systém/Šablóny')
+          .setValue(this.plugin.settings.excludedPathPrefixes)
+          .onChange(async (value) => {
+            this.plugin.settings.excludedPathPrefixes = value;
             await this.plugin.saveSettings(true);
           }),
       );
@@ -463,4 +477,11 @@ function suggestPropertyMappings(
 
 function formatLabel(priority: Priority): string {
   return `${priority.charAt(0).toUpperCase()}${priority.slice(1)}`;
+}
+
+function parsePathPrefixes(value: string): string[] {
+  return value
+    .split(/[,\n]/u)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
 }

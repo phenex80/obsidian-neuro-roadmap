@@ -34,6 +34,7 @@ export interface RoadmapParserOptions {
   readonly propertyKeys: PropertyKeyMap;
   readonly semanticValues: SemanticValueMap;
   readonly excludedTemplateValues: readonly string[];
+  readonly excludedPathPrefixes: readonly string[];
   readonly defaultDurationBuffer: number;
   readonly defaultPriority: Priority;
 }
@@ -43,6 +44,7 @@ export function createDefaultParserOptions(): RoadmapParserOptions {
     propertyKeys: compilePropertyKeyMap(propertyMappingSchema.parse({})),
     semanticValues: compileSemanticValueMap(semanticValueMappingSchema.parse({})),
     excludedTemplateValues: ['template', 'šablóna', 'sablona'],
+    excludedPathPrefixes: [],
     defaultDurationBuffer: 1.3,
     defaultPriority: 'medium',
   };
@@ -63,7 +65,11 @@ export class RoadmapParser {
     this.options = normalizeParserOptions(options);
   }
 
-  shouldIgnoreFile(cache: CachedMetadata): boolean {
+  shouldIgnoreFile(file: TFile, cache: CachedMetadata): boolean {
+    if (this.isExcludedPath(file.path)) {
+      return true;
+    }
+
     const frontmatter = asRecord(cache.frontmatter);
     if (frontmatter === null) {
       return false;
@@ -83,7 +89,7 @@ export class RoadmapParser {
   }
 
   parseFile(file: TFile, cache: CachedMetadata, source: string): RoadmapNode[] {
-    if (this.shouldIgnoreFile(cache)) {
+    if (this.shouldIgnoreFile(file, cache)) {
       return [];
     }
 
@@ -124,7 +130,7 @@ export class RoadmapParser {
     project: string | undefined,
     semester: string | undefined,
   ): RoadmapNode | null {
-    if (values === null || !hasNodeDefiningFrontmatter(values, this.options.propertyKeys)) {
+    if (values === null) {
       return null;
     }
 
@@ -142,6 +148,20 @@ export class RoadmapParser {
     const dueDate = readDate(dueEntry?.value) ?? milestoneDate;
     const mappedType = mapNodeType(typeEntry?.value, this.options.semanticValues);
     const milestoneFlag = readBoolean(milestoneEntry?.value) === true || milestoneDate !== undefined;
+
+    // A roadmap note is an inheritance/inline-task anchor, not a task by itself.
+    if (mappedType === 'roadmap') {
+      return null;
+    }
+
+    const explicitlyEligible =
+      mappedType === 'task' || mappedType === 'project' || mappedType === 'milestone';
+    const hasSchedulingSignal =
+      startDate !== undefined || dueDate !== undefined || milestoneFlag;
+    if (!explicitlyEligible && !hasSchedulingSignal) {
+      return null;
+    }
+
     const type = mappedType ?? (milestoneFlag ? 'milestone' : 'task');
     const status = mapStatus(statusEntry?.value, this.options.semanticValues) ?? 'todo';
     const priority =
@@ -365,6 +385,17 @@ export class RoadmapParser {
 
     return this.metadataCache.getFirstLinkpathDest(linkpath, sourceFile.path)?.path ?? trimmed;
   }
+
+  private isExcludedPath(filePath: string): boolean {
+    const normalizedPath = normalizeVaultPath(filePath);
+    return this.options.excludedPathPrefixes.some((prefix) => {
+      const normalizedPrefix = normalizeVaultPath(prefix);
+      return (
+        normalizedPrefix.length > 0 &&
+        (normalizedPath === normalizedPrefix || normalizedPath.startsWith(`${normalizedPrefix}/`))
+      );
+    });
+  }
 }
 
 export function isCompletedTaskMarker(marker: string): boolean {
@@ -420,25 +451,6 @@ function asRecord(value: unknown): FrontmatterValues | null {
     : null;
 }
 
-function hasNodeDefiningFrontmatter(
-  values: FrontmatterValues,
-  propertyKeys: PropertyKeyMap,
-): boolean {
-  const definingFields: readonly CanonicalPropertyField[] = [
-    'type',
-    'status',
-    'priority',
-    'startDate',
-    'dueDate',
-    'milestone',
-    'durationBuffer',
-    'parent',
-    'dependsOn',
-    'hardDependency',
-  ];
-  return definingFields.some((field) => readMappedValue(values, propertyKeys[field]) !== undefined);
-}
-
 function normalizeParserOptions(options: RoadmapParserOptions): RoadmapParserOptions {
   const propertyKeys = {} as Record<CanonicalPropertyField, readonly string[]>;
   for (const field of Object.keys(options.propertyKeys) as CanonicalPropertyField[]) {
@@ -451,12 +463,21 @@ function normalizeParserOptions(options: RoadmapParserOptions): RoadmapParserOpt
     excludedTemplateValues: uniqueNonEmptyValues(options.excludedTemplateValues).filter(
       (value) => normalizeSemanticValue(value) !== normalizeSemanticValue('roadmapa'),
     ),
+    excludedPathPrefixes: uniqueNonEmptyValues(options.excludedPathPrefixes),
     defaultDurationBuffer:
       Number.isFinite(options.defaultDurationBuffer) && options.defaultDurationBuffer > 0
         ? options.defaultDurationBuffer
         : 1.3,
     defaultPriority: options.defaultPriority,
   };
+}
+
+function normalizeVaultPath(value: string): string {
+  return value
+    .trim()
+    .replace(/\\/gu, '/')
+    .replace(/^\.\//u, '')
+    .replace(/^\/+|\/+$/gu, '');
 }
 
 function primaryKey(keys: readonly string[], fallback: string): string {
