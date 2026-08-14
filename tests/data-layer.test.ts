@@ -261,6 +261,24 @@ test('overview density stays bounded for 5, 50, and 200 tasks', () => {
   }
 });
 
+test('compact timeline preserves scheduled distribution without positioning unscheduled items', () => {
+  const nodes = [
+    createNode('range', { startDate: '2026-09-02', dueDate: '2026-09-05' }),
+    createNode('due-only', { dueDate: '2026-09-12' }),
+    createNode('milestone', { type: 'milestone', dueDate: '2026-09-20' }),
+    createNode('unscheduled-a'),
+    createNode('unscheduled-b'),
+  ];
+  const domain = createTimelineDomain(nodes, 30, '2026-09-01');
+  const compact = buildTimelineOverview(nodes, domain, 30, '2026-09-10');
+
+  assert.equal(compact.flatMap((item) => item.nodes).length, 3);
+  assert.equal(compact.some((item) => item.nodes.some((node) => node.id === 'unscheduled-a')), false);
+  assert.equal(compact.find((item) => item.nodes[0]?.id === 'range')?.kind, 'segment');
+  assert.equal(compact.find((item) => item.nodes[0]?.id === 'due-only')?.kind, 'marker');
+  assert.equal(compact.find((item) => item.nodes[0]?.id === 'milestone')?.kind, 'marker');
+});
+
 test('automatic dependency propagation never shifts a fixed downstream deadline', () => {
   const moved = createNode('moved', { startDate: '2026-09-01', dueDate: '2026-09-03' });
   const soft = createNode('soft', { startDate: '2026-09-04', dueDate: '2026-09-05' });

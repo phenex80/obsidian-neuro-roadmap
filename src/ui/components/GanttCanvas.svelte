@@ -69,11 +69,6 @@
     readonly marker: boolean;
   }
 
-  interface SummaryGeometry {
-    readonly startColumn: number;
-    readonly spanColumns: number;
-  }
-
   let collapsedSubjects = $state<string[]>([]);
   let collapsedProjects = $state<string[]>([]);
   let selectedNodeId = $state<string | null>(null);
@@ -82,6 +77,7 @@
       .filter(hasUsableDate)
       .sort(compareDatedNodes),
   );
+  let hierarchyNodes = $derived([...nodes].sort(compareDatedNodes));
   let minimumDayCount = $derived(scale === 'days' ? 14 : scale === 'weeks' ? 84 : 365);
   let domainNodes = $derived(datedNodes.map(expandNodeForBufferedDomain));
   let timelineDomain = $derived(createTimelineDomain(domainNodes, minimumDayCount));
@@ -91,7 +87,7 @@
     Array.from({ length: dayCount }, (_, index) => addDays(timelineStart, index)),
   );
   let headerSegments = $derived(buildHeaderSegments(dayLabels, scale));
-  let ganttRows = $derived(buildHierarchyRows(datedNodes, collapsedSubjects, collapsedProjects));
+  let ganttRows = $derived(buildHierarchyRows(hierarchyNodes, collapsedSubjects, collapsedProjects));
   let rowCount = $derived(Math.max(ganttRows.length, EMPTY_ROW_COUNT));
   let rowNumbers = $derived(Array.from({ length: rowCount }, (_, index) => index + 1));
   let timelineNodes = $derived(buildTimelineNodes(ganttRows, timelineStart));
@@ -208,7 +204,7 @@
           }
         }
 
-        for (const node of projectNodes) {
+        for (const node of projectNodes.filter(hasUsableDate)) {
           rows.push({
             kind: 'task',
             key: `task:${node.id}`,
@@ -253,22 +249,6 @@
         marker,
       }];
     });
-  }
-
-  function summaryGeometry(row: GanttRow): SummaryGeometry | null {
-    const dates = row.nodes
-      .flatMap((node) => [validDate(node.startDate), validDate(node.dueDate)])
-      .filter((date): date is string => date !== null)
-      .sort();
-    const startDate = dates[0];
-    const endDate = dates.at(-1);
-    if (startDate === undefined || endDate === undefined) {
-      return null;
-    }
-    return {
-      startColumn: daysBetween(timelineStart, startDate) + 1,
-      spanColumns: Math.max(1, daysBetween(startDate, endDate) + 1),
-    };
   }
 
   function toggleSubject(subject: string): void {
@@ -344,6 +324,35 @@
 
   function overviewBucketCount(timelineScale: 'days' | 'weeks' | 'months'): number {
     return timelineScale === 'days' ? 48 : timelineScale === 'weeks' ? 32 : 18;
+  }
+
+  function collapsedBucketCount(timelineScale: 'days' | 'weeks' | 'months'): number {
+    return timelineScale === 'days' ? 36 : timelineScale === 'weeks' ? 20 : 12;
+  }
+
+  function collapsedOverviewItems(row: GanttRow): TimelineOverviewItem[] {
+    return row.collapsed
+      ? buildTimelineOverview(row.nodes, timelineDomain, collapsedBucketCount(scale))
+      : [];
+  }
+
+  function isMilestoneItem(item: TimelineOverviewItem): boolean {
+    return item.kind === 'marker' && item.nodes[0]?.type === 'milestone';
+  }
+
+  function unscheduledCount(row: GanttRow): number {
+    return row.nodes.filter((node) => !hasUsableDate(node)).length;
+  }
+
+  function groupCountLabel(row: GanttRow): string {
+    const unscheduled = unscheduledCount(row);
+    return unscheduled === 0
+      ? `${row.nodes.length} items`
+      : `${row.nodes.length} items · ${unscheduled} unscheduled`;
+  }
+
+  function groupTooltip(row: GanttRow): string {
+    return `${row.label}\n${groupCountLabel(row)}`;
   }
 
   function isWeekend(date: string): boolean {
@@ -535,7 +544,10 @@
   }
 
   function isTimelineItem(target: EventTarget | null): boolean {
-    return target instanceof Element && target.closest('.timeline-pill, .timeline-marker') !== null;
+    return (
+      target instanceof Element &&
+      target.closest('.timeline-pill, .timeline-marker, .collapsed-ribbon-item') !== null
+    );
   }
 
   function isHierarchyBand(target: EventTarget | null): boolean {
@@ -565,12 +577,12 @@
                 class:subject-end={row.subjectEnd}
                 style={`grid-row: ${row.row}`}
                 aria-expanded={!row.collapsed}
-                title={row.subject}
+                title={groupTooltip(row)}
                 onclick={() => toggleSubject(row.subject)}
               >
                 <span class="disclosure">{row.collapsed ? '▸' : '▾'}</span>
                 <strong>{row.label}</strong>
-                <small>{row.nodes.length}</small>
+                <small>{groupCountLabel(row)}</small>
               </button>
             {:else if row.kind === 'project' && row.project !== undefined}
               <button
@@ -579,12 +591,12 @@
                 class:subject-end={row.subjectEnd}
                 style={`grid-row: ${row.row}`}
                 aria-expanded={!row.collapsed}
-                title={row.project}
+                title={groupTooltip(row)}
                 onclick={() => toggleProject(row.subject, row.project ?? '')}
               >
                 <span class="disclosure">{row.collapsed ? '▸' : '▾'}</span>
                 <span>{row.label}</span>
-                <small>{row.nodes.length}</small>
+                <small>{groupCountLabel(row)}</small>
               </button>
             {:else if row.node !== undefined}
               {@const taskNode = row.node}
@@ -689,13 +701,31 @@
               class:subject-end={row.subjectEnd}
               style={`grid-column: 1 / -1; grid-row: ${row.row}`}
             ></div>
-            {@const geometry = row.collapsed ? summaryGeometry(row) : null}
-            {#if geometry !== null}
+            {@const compactItems = collapsedOverviewItems(row)}
+            {#if compactItems.length > 0}
               <div
-                class={`summary-bar ${row.kind}-summary`}
-                style={`grid-column: ${geometry.startColumn} / span ${geometry.spanColumns}; grid-row: ${row.row}`}
-                title={`${row.label}: ${row.nodes.length} items`}
-              ></div>
+                class={`collapsed-ribbon ${row.kind}-ribbon`}
+                style={`grid-column: 1 / -1; grid-row: ${row.row}`}
+                aria-label={`${row.label} compact timeline. ${groupCountLabel(row)}`}
+              >
+                {#each compactItems as item (item.key)}
+                  <button
+                    type="button"
+                    class={`collapsed-ribbon-item compact-${item.kind} status-${item.status}`}
+                    class:compact-milestone={isMilestoneItem(item)}
+                    class:color-coded={enableColorCoding}
+                    class:overdue={item.overdue}
+                    style={`--compact-left: ${item.leftPercent}%; --compact-width: ${item.widthPercent}%; --compact-lane: ${item.lane}`}
+                    title={overviewTooltip(item)}
+                    aria-label={overviewTooltip(item)}
+                    onclick={() => void focusOverviewItem(item)}
+                  >
+                    {#if item.kind === 'cluster'}
+                      <span>+{item.nodes.length}</span>
+                    {/if}
+                  </button>
+                {/each}
+              </div>
             {/if}
           {/each}
 
@@ -1076,15 +1106,65 @@
     pointer-events: none;
   }
 
-  .summary-bar {
+  .collapsed-ribbon {
+    --compact-item-size: var(--size-4-2);
+    --compact-lane-step: calc(var(--compact-item-size) + var(--size-2-1));
+    position: relative;
     z-index: 3;
-    align-self: center;
-    height: var(--size-4-2);
-    margin-inline: var(--size-2-1);
-    border: var(--border-width) solid var(--interactive-accent);
-    border-radius: var(--radius-l);
-    background: var(--background-modifier-hover);
+    align-self: stretch;
+    margin-inline: var(--size-2-2);
+    overflow: hidden;
     pointer-events: none;
+  }
+
+  .collapsed-ribbon::before {
+    position: absolute;
+    inset: 50% 0 auto;
+    height: var(--border-width);
+    background: var(--border-color);
+    content: '';
+  }
+
+  .collapsed-ribbon-item {
+    position: absolute;
+    top: calc(var(--size-2-1) + var(--compact-lane) * var(--compact-lane-step));
+    left: var(--compact-left);
+    z-index: 3;
+    min-width: var(--compact-item-size);
+    height: var(--compact-item-size);
+    padding: 0;
+    transform: translateX(-50%);
+    border: var(--border-width) solid var(--text-muted);
+    border-radius: var(--radius-l);
+    background: var(--background-primary);
+    color: var(--text-normal);
+    cursor: pointer;
+    pointer-events: auto;
+  }
+
+  .compact-segment {
+    width: max(var(--compact-width), var(--compact-item-size));
+    transform: none;
+  }
+
+  .compact-milestone {
+    transform: translateX(-50%) rotate(45deg);
+    border-radius: var(--radius-s);
+  }
+
+  .compact-cluster {
+    display: grid;
+    width: var(--size-4-6);
+    height: var(--size-4-6);
+    place-items: center;
+    font-size: var(--font-ui-smaller);
+  }
+
+  .collapsed-ribbon-item:hover,
+  .collapsed-ribbon-item:focus-visible {
+    z-index: 5;
+    outline: var(--border-width) solid var(--interactive-accent);
+    outline-offset: var(--size-2-1);
   }
 
   .timeline-pill,
