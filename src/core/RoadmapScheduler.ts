@@ -2,17 +2,29 @@ import { TFile, type App } from 'obsidian';
 import { DependencyEngine } from './DependencyEngine';
 import type { RoadmapIndexer } from './Indexer';
 import type { RoadmapNode } from '../types';
+import type { PropertyKeyMap } from './SemanticMapping';
 import {
   appendScratchpadText,
   createRoadmapNote,
   updateMarkdownTaskCompletion,
   updateNodeDates,
   updateNodeDatesBatch,
+  type RoadmapCreationKeys,
 } from '../utils/obsidianHelpers';
 
 /** Coordinates roadmap UI actions with atomic Markdown writes. */
 export class RoadmapScheduler {
   private readonly dependencyEngine: DependencyEngine;
+  private creationKeys: RoadmapCreationKeys = {
+    title: 'title',
+    type: 'type',
+    startDate: 'start_date',
+    dueDate: 'due_date',
+    durationBuffer: 'duration_buffer',
+    priority: 'priority',
+    status: 'status',
+    hardDependency: 'hard_dependency',
+  };
 
   constructor(
     private readonly app: App,
@@ -32,7 +44,20 @@ export class RoadmapScheduler {
   }
 
   async createNode(startDate: string, dueDate: string): Promise<void> {
-    await createRoadmapNote(this.app, startDate, dueDate);
+    await createRoadmapNote(this.app, startDate, dueDate, this.creationKeys);
+  }
+
+  setCreationPropertyKeys(propertyKeys: PropertyKeyMap): void {
+    this.creationKeys = {
+      title: propertyKeys.title[0] ?? 'title',
+      type: propertyKeys.type[0] ?? 'type',
+      startDate: propertyKeys.startDate[0] ?? 'start_date',
+      dueDate: propertyKeys.dueDate[0] ?? 'due_date',
+      durationBuffer: propertyKeys.durationBuffer[0] ?? 'duration_buffer',
+      priority: propertyKeys.priority[0] ?? 'priority',
+      status: propertyKeys.status[0] ?? 'status',
+      hardDependency: propertyKeys.hardDependency[0] ?? 'hard_dependency',
+    };
   }
 
   async appendScratchpad(node: RoadmapNode, text: string): Promise<void> {

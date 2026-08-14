@@ -228,16 +228,20 @@ export class RoadmapParser {
       }
 
       const inlineProperties = extractInlineProperties(taskBody);
-      const startDate = readDate(this.readInlineValue(inlineProperties, 'startDate'));
-      const milestoneDate = readDate(this.readInlineValue(inlineProperties, 'milestone'));
-      const dueDate = readDate(this.readInlineValue(inlineProperties, 'dueDate')) ?? milestoneDate;
+      const startEntry = this.readInlineEntry(inlineProperties, 'startDate');
+      const dueEntry = this.readInlineEntry(inlineProperties, 'dueDate');
+      const milestoneEntry = this.readInlineEntry(inlineProperties, 'milestone');
+      const statusEntry = this.readInlineEntry(inlineProperties, 'status');
+      const startDate = readDate(startEntry?.value);
+      const milestoneDate = readDate(milestoneEntry?.value);
+      const dueDate = readDate(dueEntry?.value) ?? milestoneDate;
       const priority =
         mapPriority(
           this.readInlineValue(inlineProperties, 'priority'),
           this.options.semanticValues,
         ) ?? this.options.defaultPriority;
       const explicitStatus = mapStatus(
-        this.readInlineValue(inlineProperties, 'status'),
+        statusEntry?.value,
         this.options.semanticValues,
       );
       const completed = isCompletedTaskMarker(task.task ?? matchedTask?.[1] ?? ' ');
@@ -282,9 +286,11 @@ export class RoadmapParser {
         sourceLine: lineNumber,
         completed,
         writeKeys: {
-          startDate: primaryKey(this.options.propertyKeys.startDate, 'start'),
-          dueDate: primaryKey(this.options.propertyKeys.dueDate, 'due'),
-          status: primaryKey(this.options.propertyKeys.status, 'status'),
+          startDate:
+            startEntry?.key ?? preferredInlineKey(this.options.propertyKeys.startDate, 'start'),
+          dueDate: dueEntry?.key ?? preferredInlineKey(this.options.propertyKeys.dueDate, 'due'),
+          status:
+            statusEntry?.key ?? preferredInlineKey(this.options.propertyKeys.status, 'status'),
         },
       });
     }
@@ -325,10 +331,17 @@ export class RoadmapParser {
     properties: InlineProperties,
     field: CanonicalPropertyField,
   ): string | undefined {
+    return this.readInlineEntry(properties, field)?.value;
+  }
+
+  private readInlineEntry(
+    properties: InlineProperties,
+    field: CanonicalPropertyField,
+  ): { readonly key: string; readonly value: string } | undefined {
     for (const key of this.options.propertyKeys[field]) {
       const entry = properties.get(normalizeSemanticValue(key).replace(/-/gu, ''));
       if (entry !== undefined) {
-        return entry.value;
+        return entry;
       }
     }
     return undefined;
@@ -448,6 +461,10 @@ function normalizeParserOptions(options: RoadmapParserOptions): RoadmapParserOpt
 
 function primaryKey(keys: readonly string[], fallback: string): string {
   return keys[0] ?? fallback;
+}
+
+function preferredInlineKey(keys: readonly string[], fallback: string): string {
+  return keys.find((key) => normalizeSemanticValue(key) === normalizeSemanticValue(fallback)) ?? fallback;
 }
 
 function readDate(value: unknown): string | undefined {

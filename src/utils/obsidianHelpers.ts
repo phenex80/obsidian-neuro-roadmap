@@ -8,6 +8,17 @@ export interface NodeDateUpdate {
   dueDate: string;
 }
 
+export interface RoadmapCreationKeys {
+  readonly title: string;
+  readonly type: string;
+  readonly startDate: string;
+  readonly dueDate: string;
+  readonly durationBuffer: string;
+  readonly priority: string;
+  readonly status: string;
+  readonly hardDependency: string;
+}
+
 /** Updates only the date fields belonging to a roadmap node. */
 export async function updateNodeDates(
   app: App,
@@ -84,24 +95,33 @@ export async function appendScratchpadText(app: App, node: RoadmapNode, text: st
 }
 
 /** Creates a real Markdown roadmap note with the selected timeline dates. */
-export async function createRoadmapNote(app: App, startDate: string, dueDate: string): Promise<TFile> {
+export async function createRoadmapNote(
+  app: App,
+  startDate: string,
+  dueDate: string,
+  keys: RoadmapCreationKeys,
+): Promise<TFile> {
   const basePath = `Roadmap ${startDate}`;
   const path = getAvailablePath(app, basePath);
   const content = [
     '---',
-    'title: "New roadmap task"',
-    'type: task',
-    `start_date: ${startDate}`,
-    `due_date: ${dueDate}`,
-    'duration_buffer: 1.3',
-    'priority: medium',
-    'status: todo',
-    'hard_dependency: false',
+    `${yamlKey(keys.title)}: "New roadmap task"`,
+    `${yamlKey(keys.type)}: task`,
+    `${yamlKey(keys.startDate)}: ${startDate}`,
+    `${yamlKey(keys.dueDate)}: ${dueDate}`,
+    `${yamlKey(keys.durationBuffer)}: 1.3`,
+    `${yamlKey(keys.priority)}: medium`,
+    `${yamlKey(keys.status)}: todo`,
+    `${yamlKey(keys.hardDependency)}: false`,
     '---',
     '',
   ].join('\n');
 
   return app.vault.create(path, content);
+}
+
+function yamlKey(value: string): string {
+  return /^[\p{L}\p{N}_-]+$/u.test(value) ? value : JSON.stringify(value);
 }
 
 function getMarkdownFile(app: App, path: string): TFile | null {

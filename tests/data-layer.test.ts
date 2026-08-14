@@ -21,6 +21,8 @@ import { DependencyEngine } from '../src/core/DependencyEngine';
 import type { RoadmapIndexer } from '../src/core/Indexer';
 import { buildSubjectSummaries } from '../src/core/DashboardMetrics';
 import { classifyHorizon, formatRelativeTaskDate } from '../src/core/HorizonPlanner';
+import { migrateRoadmapSettingsData } from '../src/core/SettingsMigration';
+import { roadmapSettingsSchema } from '../src/types';
 
 const metadataCache = {
   getFirstLinkpathDest: () => null,
@@ -68,6 +70,10 @@ test('roadmap anchor notes are indexed while real templates are excluded', () =>
     nodes.filter((node) => node.source === 'inline').map((node) => node.status),
     ['todo', 'done'],
   );
+  assert.equal(
+    nodes.filter((node) => node.source === 'inline')[1]?.writeKeys.dueDate,
+    'deadline',
+  );
   assert.ok(nodes.every((node) => node.subject === 'ISKB02'));
 
   const templateCache = createCache(
@@ -114,6 +120,8 @@ test('inline tasks inherit subject, semester, and optional project/workstream', 
   assert.equal(tasks[0]?.subject, 'ISKB02');
   assert.equal(tasks[0]?.project, 'Semester project');
   assert.equal(tasks[0]?.semester, '1. semester');
+  assert.equal(tasks[0]?.writeKeys.startDate, 'start');
+  assert.equal(tasks[0]?.writeKeys.dueDate, 'due');
   assert.equal(tasks[1]?.completed, true);
   assert.equal(tasks[1]?.status, 'done');
 });
@@ -210,6 +218,18 @@ test('Horizon separates overdue, today, next week, later, and unscheduled tasks'
   assert.deepEqual(plan.later.map((node) => node.id), ['later']);
   assert.deepEqual(plan.unscheduled.map((node) => node.id), ['unscheduled']);
   assert.equal(formatRelativeTaskDate(nodes[0]!, '2026-09-12'), '3 days overdue');
+});
+
+test('legacy settings migrate roadmap anchors out of the template guard', () => {
+  const migrated = roadmapSettingsSchema.parse(migrateRoadmapSettingsData({
+    subjectPropertyKeys: 'predmet, course',
+    templatePropertyKey: 'typ',
+    excludedTemplateValues: 'roadmapa, šablóna, template',
+  }));
+
+  assert.equal(migrated.propertyMappings.subject, 'predmet, course');
+  assert.ok(migrated.propertyMappings.type.split(',').map((value) => value.trim()).includes('typ'));
+  assert.equal(migrated.excludedTemplateValues, 'šablóna, template');
 });
 
 function createFile(path: string): TFile {

@@ -17,10 +17,13 @@ import {
   compilePropertyKeyMap,
   compileSemanticValueMap,
   normalizePropertyKey,
-  normalizeSemanticValue,
   parseCommaSeparatedValues,
 } from './core/SemanticMapping';
 import { RoadmapScheduler } from './core/RoadmapScheduler';
+import {
+  migrateRoadmapSettingsData,
+  withoutRoadmapTemplateValue,
+} from './core/SettingsMigration';
 import { GlobalItemView, VIEW_TYPE_NEURO_ROADMAP } from './ui/views/GlobalItemView';
 import { registerRoadmapCodeblockProcessor } from './ui/processors/CodeblockProcessor';
 
@@ -51,7 +54,9 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
 
   async onload(): Promise<void> {
     await this.loadSettings();
-    this.indexer.setParserOptions(this.getParserOptions());
+    const parserOptions = this.getParserOptions();
+    this.indexer.setParserOptions(parserOptions);
+    this.scheduler.setCreationPropertyKeys(parserOptions.propertyKeys);
     await this.indexer.initialize();
     this.indexer.registerEvents((eventRef) => this.registerEvent(eventRef));
     this.registerView(VIEW_TYPE_NEURO_ROADMAP, (leaf) => new GlobalItemView(leaf, this));
@@ -76,7 +81,7 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
 
   async loadSettings(): Promise<void> {
     const savedSettings: unknown = await this.loadData();
-    const parsedSettings = roadmapSettingsSchema.safeParse(migrateSettings(savedSettings));
+    const parsedSettings = roadmapSettingsSchema.safeParse(migrateRoadmapSettingsData(savedSettings));
     this.settings = parsedSettings.success ? parsedSettings.data : DEFAULT_SETTINGS;
     this.settings.excludedTemplateValues = withoutRoadmapTemplateValue(
       this.settings.excludedTemplateValues,
@@ -90,7 +95,9 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     this.settings = roadmapSettingsSchema.parse(this.settings);
     await this.saveData(this.settings);
     if (rebuildIndex) {
-      this.indexer.setParserOptions(this.getParserOptions());
+      const parserOptions = this.getParserOptions();
+      this.indexer.setParserOptions(parserOptions);
+      this.scheduler.setCreationPropertyKeys(parserOptions.propertyKeys);
       await this.indexer.rebuild();
     }
     for (const listener of this.settingsListeners) {
@@ -415,49 +422,6 @@ class PropertyMappingSuggestionModal extends Modal {
   onClose(): void {
     this.contentEl.empty();
   }
-}
-
-function migrateSettings(value: unknown): unknown {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    return {};
-  }
-  const legacy = value as Record<string, unknown>;
-  const existingMappings =
-    legacy['propertyMappings'] !== null &&
-    typeof legacy['propertyMappings'] === 'object' &&
-    !Array.isArray(legacy['propertyMappings'])
-      ? (legacy['propertyMappings'] as Record<string, unknown>)
-      : {};
-  const defaults = propertyMappingSchema.parse({});
-  const propertyMappings: Record<string, unknown> = { ...existingMappings };
-
-  const legacySubjectKeys = legacy['subjectPropertyKeys'];
-  if (propertyMappings['subject'] === undefined && typeof legacySubjectKeys === 'string') {
-    propertyMappings['subject'] = legacySubjectKeys;
-  }
-  const legacyTemplateKey = legacy['templatePropertyKey'];
-  if (typeof legacyTemplateKey === 'string') {
-    propertyMappings['type'] = appendMappingKey(
-      typeof propertyMappings['type'] === 'string' ? propertyMappings['type'] : defaults.type,
-      legacyTemplateKey,
-    );
-  }
-
-  return {
-    ...legacy,
-    propertyMappings,
-    excludedTemplateValues: withoutRoadmapTemplateValue(
-      typeof legacy['excludedTemplateValues'] === 'string'
-        ? legacy['excludedTemplateValues']
-        : DEFAULT_SETTINGS.excludedTemplateValues,
-    ),
-  };
-}
-
-function withoutRoadmapTemplateValue(value: string): string {
-  return parseCommaSeparatedValues(value)
-    .filter((entry) => normalizeSemanticValue(entry) !== normalizeSemanticValue('roadmapa'))
-    .join(', ');
 }
 
 function appendMappingKey(existing: string, key: string): string {

@@ -111,14 +111,16 @@ export const semanticValueMappingSchema = z.object({
   typeTask: z.string().default('task, úloha, uloha'),
 });
 
+const colorValueSchema = z.string().regex(/^#[0-9a-f]{6}$/iu);
+
 export const colorSettingsSchema = z.object({
-  todo: z.string().default('#579bfc'),
-  inProgress: z.string().default('#fdab3d'),
-  done: z.string().default('#00c875'),
-  overdue: z.string().default('#ff3b30'),
-  priorityHigh: z.string().default('#e2445c'),
-  priorityMedium: z.string().default('#fdab3d'),
-  priorityLow: z.string().default('#c4c4c4'),
+  todo: colorValueSchema.default('#579bfc'),
+  inProgress: colorValueSchema.default('#fdab3d'),
+  done: colorValueSchema.default('#00c875'),
+  overdue: colorValueSchema.default('#ff3b30'),
+  priorityHigh: colorValueSchema.default('#e2445c'),
+  priorityMedium: colorValueSchema.default('#fdab3d'),
+  priorityLow: colorValueSchema.default('#c4c4c4'),
 });
 
 export const roadmapSettingsSchema = z.object({
