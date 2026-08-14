@@ -61,6 +61,9 @@ export const roadmapSettingsSchema = z.object({
   defaultDurationBuffer: z.number().finite().positive().default(1.3),
   defaultPriority: z.enum(PRIORITIES).default('medium'),
   enableColorCoding: z.boolean().default(true),
+  subjectPropertyKeys: z.string().default('predmet, subject'),
+  templatePropertyKey: z.string().default('typ'),
+  excludedTemplateValues: z.string().default('roadmapa, šablóna, template'),
 });
 
 export type NodeType = z.infer<typeof roadmapNodeFrontmatterSchema>['type'];

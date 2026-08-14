@@ -6,6 +6,7 @@ import {
   type RoadmapSettings,
 } from './types';
 import { RoadmapIndexer } from './core/Indexer';
+import type { RoadmapParserOptions } from './core/Parser';
 import { RoadmapScheduler } from './core/RoadmapScheduler';
 import { GlobalItemView, VIEW_TYPE_NEURO_ROADMAP } from './ui/views/GlobalItemView';
 import { registerRoadmapCodeblockProcessor } from './ui/processors/CodeblockProcessor';
@@ -21,6 +22,7 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
 
   async onload(): Promise<void> {
     await this.loadSettings();
+    this.indexer.setParserOptions(this.getParserOptions());
     await this.indexer.initialize();
     this.indexer.registerEvents((eventRef) => this.registerEvent(eventRef));
     this.registerView(VIEW_TYPE_NEURO_ROADMAP, (leaf) => new GlobalItemView(leaf, this));
@@ -49,9 +51,13 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     this.settings = parsedSettings.success ? parsedSettings.data : DEFAULT_SETTINGS;
   }
 
-  async saveSettings(): Promise<void> {
+  async saveSettings(rebuildIndex = false): Promise<void> {
     this.settings = roadmapSettingsSchema.parse(this.settings);
     await this.saveData(this.settings);
+    if (rebuildIndex) {
+      this.indexer.setParserOptions(this.getParserOptions());
+      await this.indexer.rebuild();
+    }
     for (const listener of this.settingsListeners) {
       listener(this.settings);
     }
@@ -62,6 +68,14 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     listener(this.settings);
     return () => {
       this.settingsListeners.delete(listener);
+    };
+  }
+
+  private getParserOptions(): RoadmapParserOptions {
+    return {
+      subjectPropertyKeys: parseCommaSeparatedValues(this.settings.subjectPropertyKeys),
+      templatePropertyKey: this.settings.templatePropertyKey,
+      excludedTemplateValues: parseCommaSeparatedValues(this.settings.excludedTemplateValues),
     };
   }
 
@@ -95,6 +109,45 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.enableColorCoding = value;
             await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Subject Property Keys')
+      .setDesc('Comma-separated YAML keys used to find the subject for a roadmap node.')
+      .addText((text) =>
+        text
+          .setPlaceholder('predmet, subject')
+          .setValue(this.plugin.settings.subjectPropertyKeys)
+          .onChange(async (value) => {
+            this.plugin.settings.subjectPropertyKeys = value;
+            await this.plugin.saveSettings(true);
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Template Property Key')
+      .setDesc('YAML key used to identify template notes that should not be indexed.')
+      .addText((text) =>
+        text
+          .setPlaceholder('typ')
+          .setValue(this.plugin.settings.templatePropertyKey)
+          .onChange(async (value) => {
+            this.plugin.settings.templatePropertyKey = value;
+            await this.plugin.saveSettings(true);
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Excluded Template Values')
+      .setDesc('Comma-separated values that exclude an entire file from the roadmap index.')
+      .addText((text) =>
+        text
+          .setPlaceholder('roadmapa, šablóna, template')
+          .setValue(this.plugin.settings.excludedTemplateValues)
+          .onChange(async (value) => {
+            this.plugin.settings.excludedTemplateValues = value;
+            await this.plugin.saveSettings(true);
           }),
       );
 
@@ -141,4 +194,11 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
   private formatPriority(priority: Priority): string {
     return `${priority.charAt(0).toUpperCase()}${priority.slice(1)}`;
   }
+}
+
+function parseCommaSeparatedValues(value: string): string[] {
+  return value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
 }

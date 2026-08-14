@@ -109,7 +109,9 @@
 
   .horizon-column {
     min-height: 14rem;
+    max-height: calc(100vh - 200px);
     padding: var(--size-4-3);
+    overflow-y: auto;
     border: var(--border-width) solid var(--border-color);
     border-radius: var(--radius-m);
     background: var(--background-secondary);
@@ -144,12 +146,14 @@
   .roadmap-card {
     display: flex;
     width: 100%;
+    box-sizing: border-box;
     flex-direction: column;
-    align-items: stretch;
+    align-items: flex-start;
     justify-content: flex-start;
-    gap: var(--size-4-3);
+    gap: 8px;
     min-width: 0;
     padding: var(--size-4-3);
+    overflow: hidden;
     border: var(--border-width) solid var(--border-color);
     border-radius: var(--radius-m);
     background: var(--background-primary-alt);
@@ -166,7 +170,7 @@
   }
 
   .card-title {
-    display: block;
+    display: -webkit-box;
     width: 100%;
     flex: 0 0 auto;
     overflow: hidden;
@@ -174,8 +178,10 @@
     color: var(--text-normal);
     font-size: var(--font-ui-medium);
     font-weight: 600;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    white-space: normal;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
   }
 
   .roadmap-card.color-coded.status-todo {
@@ -193,7 +199,7 @@
   .metadata-row {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--size-2-2);
+    gap: 6px;
     margin-top: auto;
   }
 
@@ -241,5 +247,18 @@
 
   .column-empty {
     padding: var(--size-4-2) 0;
+  }
+
+  @media (max-width: 1024px) {
+    .horizon {
+      display: flex;
+      grid-template-columns: minmax(280px, 1fr);
+      overflow-x: auto;
+    }
+
+    .horizon-column {
+      min-width: 280px;
+      flex-shrink: 0;
+    }
   }
 </style>

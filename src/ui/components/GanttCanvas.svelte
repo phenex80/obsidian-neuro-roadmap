@@ -668,4 +668,10 @@
     font-size: var(--font-ui-small);
     pointer-events: none;
   }
+
+  @media (max-width: 1024px) {
+    .gantt-shell {
+      grid-template-columns: 180px minmax(100%, max-content);
+    }
+  }
 </style>

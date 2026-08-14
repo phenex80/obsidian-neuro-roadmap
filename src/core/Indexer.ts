@@ -1,5 +1,5 @@
 import { TFile, type App, type CachedMetadata, type EventRef, type TAbstractFile } from 'obsidian';
-import { RoadmapParser } from './Parser';
+import { RoadmapParser, type RoadmapParserOptions } from './Parser';
 import type { RoadmapNode } from '../types';
 
 export type RoadmapIndexListener = (nodes: readonly RoadmapNode[]) => void;
@@ -23,6 +23,16 @@ export class RoadmapIndexer {
 
   /** Performs the one-time cache-backed initial index before a view consumes the graph. */
   async initialize(): Promise<void> {
+    await this.rebuild();
+  }
+
+  /** Applies YAML mapping settings to all subsequent parser operations. */
+  setParserOptions(options: RoadmapParserOptions): void {
+    this.parser.setOptions(options);
+  }
+
+  /** Rebuilds the graph after parser configuration changes. */
+  async rebuild(): Promise<void> {
     const files = this.app.vault.getMarkdownFiles();
     await Promise.all(files.map(async (file) => this.reindexFile(file, false)));
     this.emitChange();

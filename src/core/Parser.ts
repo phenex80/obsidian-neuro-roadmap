@@ -33,13 +33,41 @@ const BLOCK_ID_PATTERN = /\s+\^([A-Za-z0-9-]+)\s*$/;
 
 type FrontmatterValues = Record<string, unknown>;
 
+export interface RoadmapParserOptions {
+  subjectPropertyKeys: readonly string[];
+  templatePropertyKey: string;
+  excludedTemplateValues: readonly string[];
+}
+
+const DEFAULT_PARSER_OPTIONS: RoadmapParserOptions = {
+  subjectPropertyKeys: ['predmet', 'subject'],
+  templatePropertyKey: 'typ',
+  excludedTemplateValues: ['roadmapa', 'šablóna', 'template'],
+};
+
 /** Parses cached Obsidian metadata and Markdown content into roadmap nodes. */
 export class RoadmapParser {
-  constructor(private readonly metadataCache: MetadataCache) {}
+  private options: RoadmapParserOptions;
+
+  constructor(
+    private readonly metadataCache: MetadataCache,
+    options: RoadmapParserOptions = DEFAULT_PARSER_OPTIONS,
+  ) {
+    this.options = normalizeParserOptions(options);
+  }
+
+  setOptions(options: RoadmapParserOptions): void {
+    this.options = normalizeParserOptions(options);
+  }
 
   parseFile(file: TFile, cache: CachedMetadata, source: string): RoadmapNode[] {
+    const frontmatter = asRecord(cache.frontmatter);
+    if (frontmatter !== null && this.isExcludedTemplate(frontmatter)) {
+      return [];
+    }
+
     const nodes: RoadmapNode[] = [];
-    const frontmatterNode = this.parseFrontmatterNode(file, cache.frontmatter);
+    const frontmatterNode = this.parseFrontmatterNode(file, frontmatter);
 
     if (frontmatterNode !== null) {
       nodes.push(frontmatterNode);
@@ -51,10 +79,12 @@ export class RoadmapParser {
 
   private parseFrontmatterNode(
     file: TFile,
-    frontmatter: unknown,
+    values: FrontmatterValues | null,
   ): RoadmapNode | null {
-    const values = asRecord(frontmatter);
-    if (values === null || !hasRoadmapFrontmatter(values)) {
+    if (
+      values === null ||
+      !hasRoadmapFrontmatter(values, this.options.subjectPropertyKeys)
+    ) {
       return null;
     }
 
@@ -62,7 +92,6 @@ export class RoadmapParser {
     addNonEmptyString(candidate, 'title', values['title']);
     addOption(candidate, 'type', values['type'], NODE_TYPES);
     addNonEmptyString(candidate, 'semester', values['semester']);
-    addWikilink(candidate, 'subject', values['subject']);
     addDate(candidate, 'start_date', values['start_date']);
     addDate(candidate, 'due_date', values['due_date']);
     addPositiveNumber(candidate, 'duration_buffer', values['duration_buffer']);
@@ -87,7 +116,7 @@ export class RoadmapParser {
       title: data.title ?? file.basename,
       type: data.type,
       semester: data.semester,
-      subject: this.resolveWikilink(data.subject, file),
+      subject: this.extractSubject(values, file),
       startDate,
       dueDate,
       durationBuffer: data.duration_buffer,
@@ -100,6 +129,36 @@ export class RoadmapParser {
       hardDependency: data.hard_dependency,
       source: 'frontmatter',
     };
+  }
+
+  private isExcludedTemplate(values: FrontmatterValues): boolean {
+    const propertyKey = this.options.templatePropertyKey;
+    if (propertyKey.length === 0 || this.options.excludedTemplateValues.length === 0) {
+      return false;
+    }
+
+    const excludedValues = new Set(
+      this.options.excludedTemplateValues.map(normalizeComparisonValue),
+    );
+    return readFrontmatterStrings(values[propertyKey]).some((value) =>
+      excludedValues.has(normalizeComparisonValue(value)),
+    );
+  }
+
+  private extractSubject(values: FrontmatterValues, file: TFile): string | undefined {
+    for (const propertyKey of this.options.subjectPropertyKeys) {
+      const value = readFrontmatterStrings(values[propertyKey])[0];
+      if (value === undefined) {
+        continue;
+      }
+
+      if (wikilinkSchema.safeParse(value).success) {
+        return this.resolveWikilink(value, file) ?? value;
+      }
+      return value;
+    }
+
+    return undefined;
   }
 
   private parseInlineTasks(file: TFile, cache: CachedMetadata, source: string): RoadmapNode[] {
@@ -192,8 +251,44 @@ function asRecord(value: unknown): FrontmatterValues | null {
     : null;
 }
 
-function hasRoadmapFrontmatter(values: FrontmatterValues): boolean {
-  return Object.keys(values).some((key) => ROADMAP_FRONTMATTER_KEYS.has(key));
+function hasRoadmapFrontmatter(
+  values: FrontmatterValues,
+  subjectPropertyKeys: readonly string[],
+): boolean {
+  return Object.keys(values).some(
+    (key) => ROADMAP_FRONTMATTER_KEYS.has(key) || subjectPropertyKeys.includes(key),
+  );
+}
+
+function normalizeParserOptions(options: RoadmapParserOptions): RoadmapParserOptions {
+  return {
+    subjectPropertyKeys: uniqueNonEmptyValues(options.subjectPropertyKeys),
+    templatePropertyKey: options.templatePropertyKey.trim(),
+    excludedTemplateValues: uniqueNonEmptyValues(options.excludedTemplateValues),
+  };
+}
+
+function uniqueNonEmptyValues(values: readonly string[]): string[] {
+  return Array.from(
+    new Set(values.map((value) => value.trim()).filter((value) => value.length > 0)),
+  );
+}
+
+function readFrontmatterStrings(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : [value];
+  return values
+    .map((entry) =>
+      typeof entry === 'string'
+        ? entry.trim()
+        : typeof entry === 'number'
+          ? String(entry)
+          : '',
+    )
+    .filter((entry) => entry.length > 0);
+}
+
+function normalizeComparisonValue(value: string): string {
+  return value.trim().toLocaleLowerCase();
 }
 
 function addNonEmptyString(target: FrontmatterValues, key: string, value: unknown): void {
