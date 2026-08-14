@@ -1,4 +1,4 @@
-import { TFile, type App } from 'obsidian';
+import type { App, TAbstractFile, TFile } from 'obsidian';
 import type { RoadmapNode } from '../types';
 import { replaceTaskCheckbox } from '../core/MarkdownTask';
 
@@ -83,6 +83,38 @@ export async function updateMarkdownTaskCompletion(
   return updated;
 }
 
+/** Adds a stable Obsidian block ID only when a calendar operation needs one. */
+export async function ensureInlineTaskBlockId(
+  app: App,
+  node: RoadmapNode,
+): Promise<string | null> {
+  if (node.source !== 'inline') {
+    return null;
+  }
+  if (node.blockId !== undefined) {
+    return node.blockId;
+  }
+  const file = getMarkdownFile(app, node.path);
+  if (file === null) {
+    return null;
+  }
+
+  const blockId = `nr-cal-${crypto.randomUUID().replaceAll('-', '')}`;
+  let applied = false;
+  await app.vault.process(file, (source) => {
+    const lines = source.split(/\r?\n/u);
+    const lineIndex = findInlineTaskLine(lines, node);
+    const originalLine = lines[lineIndex];
+    if (lineIndex === -1 || originalLine === undefined) {
+      return source;
+    }
+    lines[lineIndex] = `${originalLine.trimEnd()} ^${blockId}`;
+    applied = true;
+    return lines.join('\n');
+  });
+  return applied ? blockId : null;
+}
+
 /** Appends scratchpad text while preserving all existing note content. */
 export async function appendScratchpadText(app: App, node: RoadmapNode, text: string): Promise<void> {
   const file = getMarkdownFile(app, node.path);
@@ -126,7 +158,7 @@ function yamlKey(value: string): string {
 
 function getMarkdownFile(app: App, path: string): TFile | null {
   const file = app.vault.getAbstractFileByPath(path);
-  return file instanceof TFile ? file : null;
+  return file !== null && isMarkdownFile(file) ? file : null;
 }
 
 function getAvailablePath(app: App, basePath: string): string {
@@ -207,4 +239,12 @@ function isTaskLine(line: string): boolean {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+}
+
+function isMarkdownFile(file: TAbstractFile): file is TFile {
+  return (
+    'extension' in file &&
+    typeof file.extension === 'string' &&
+    file.extension.toLocaleLowerCase() === 'md'
+  );
 }

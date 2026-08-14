@@ -127,6 +127,18 @@
       propertyMappings: { ...value.propertyMappings },
       valueMappings: { ...value.valueMappings },
       colors: { ...value.colors },
+      calendar: {
+        ...value.calendar,
+        automaticallyInclude: { ...value.calendar.automaticallyInclude },
+        reminderMinutes: { ...value.calendar.reminderMinutes },
+      },
+      calendarState: {
+        itemIdentities: { ...value.calendarState.itemIdentities },
+        itemOverrides: { ...value.calendarState.itemOverrides },
+        syncRecords: Object.fromEntries(
+          Object.entries(value.calendarState.syncRecords).map(([key, record]) => [key, { ...record }]),
+        ),
+      },
     };
   }
 </script>

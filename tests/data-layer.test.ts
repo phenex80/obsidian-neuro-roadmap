@@ -21,6 +21,7 @@ import type { RoadmapNode } from '../src/types';
 import { DependencyEngine } from '../src/core/DependencyEngine';
 import { RoadmapIndexer } from '../src/core/Indexer';
 import { isCalendarEligible, projectCalendarEvent } from '../src/core/CalendarCore';
+import { CalendarIdentityManager, calendarItemLocator } from '../src/core/CalendarIdentity';
 import { buildSubjectSummaries } from '../src/core/DashboardMetrics';
 import { classifyHorizon, formatRelativeTaskDate } from '../src/core/HorizonPlanner';
 import { migrateRoadmapSettingsData } from '../src/core/SettingsMigration';
@@ -96,6 +97,90 @@ test('completed and overdue items retain calendar projection semantics', () => {
   assert.equal(completed?.overdue, false);
   assert.equal(overdue?.overdue, true);
   assert.match(overdue?.description ?? '', /Overdue: yes/u);
+});
+
+test('calendar identity survives title and date changes', async () => {
+  let records: Record<string, string> = {};
+  const manager = new CalendarIdentityManager(
+    {} as App,
+    () => records,
+    async (nextRecords) => { records = nextRecords; },
+    () => 'stable-calendar-id',
+  );
+  const original = createNode('note', {
+    source: 'frontmatter',
+    path: 'Subjects/Exam.md',
+    title: 'Original title',
+    dueDate: '2026-10-10',
+  });
+  const first = await manager.ensureIdentity(original);
+  const changed = await manager.ensureIdentity({
+    ...original,
+    title: 'Renamed title',
+    dueDate: '2026-11-20',
+  });
+  assert.equal(first?.internalItemId, 'stable-calendar-id');
+  assert.equal(changed?.internalItemId, 'stable-calendar-id');
+});
+
+test('inline block identity survives line movement and file rename migration', async () => {
+  let records: Record<string, string> = {};
+  let sequence = 0;
+  const manager = new CalendarIdentityManager(
+    {} as App,
+    () => records,
+    async (nextRecords) => { records = nextRecords; },
+    () => `stable-${++sequence}`,
+  );
+  const original = createNode('task-line-4', {
+    path: 'Subjects/Tasks.md',
+    blockId: 'nr-cal-existing',
+    sourceLine: 3,
+  });
+  const first = await manager.ensureIdentity(original);
+  const moved = await manager.ensureIdentity({ ...original, id: 'task-line-40', sourceLine: 39 });
+  assert.equal(first?.internalItemId, moved?.internalItemId);
+  assert.equal(calendarItemLocator(moved?.node ?? original), 'inline:Subjects/Tasks.md#^nr-cal-existing');
+
+  await manager.handleFileRename('Subjects/Tasks.md', 'Archive/Tasks.md');
+  const renamed = await manager.ensureIdentity({ ...original, path: 'Archive/Tasks.md' });
+  assert.equal(renamed?.internalItemId, first?.internalItemId);
+});
+
+test('calendar identity adds a minimal block ID only when an inline task needs one', async () => {
+  const file = { ...createFile('Subjects/Tasks.md'), extension: 'md' } as TFile;
+  let source = '- [ ] Submit paper [due:: 2026-10-10]';
+  let records: Record<string, string> = {};
+  const app = {
+    vault: {
+      getAbstractFileByPath: () => file,
+      process: async (_file: TFile, transform: (value: string) => string) => {
+        source = transform(source);
+      },
+    },
+  } as unknown as App;
+  const manager = new CalendarIdentityManager(
+    app,
+    () => records,
+    async (nextRecords) => { records = nextRecords; },
+    () => 'generated-stable-id',
+  );
+  const result = await manager.ensureIdentity(createNode('Subjects/Tasks.md#L1', {
+    path: 'Subjects/Tasks.md',
+    source: 'inline',
+    sourceLine: 0,
+  }));
+
+  assert.match(source, / \^nr-cal-[a-f0-9]+$/u);
+  assert.match(result?.node.blockId ?? '', /^nr-cal-[a-f0-9]+$/u);
+  assert.equal(result?.internalItemId, 'generated-stable-id');
+});
+
+test('calendar sync state remains plugin-managed and defaults empty', () => {
+  const settings = roadmapSettingsSchema.parse({});
+  assert.deepEqual(settings.calendarState.itemIdentities, {});
+  assert.deepEqual(settings.calendarState.itemOverrides, {});
+  assert.deepEqual(settings.calendarState.syncRecords, {});
 });
 
 test('roadmap anchor notes contribute inline tasks but are not task nodes', () => {

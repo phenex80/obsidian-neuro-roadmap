@@ -176,6 +176,23 @@ export const calendarSettingsSchema = z.object({
   reminderMinutes: calendarReminderPolicySchema.default({}),
 });
 
+export const calendarItemOverrideSchema = z.enum(['include', 'exclude']);
+
+export const calendarSyncRecordSchema = z.object({
+  internalItemId: z.string().min(1),
+  provider: z.string().min(1),
+  externalCalendarId: z.string().min(1).optional(),
+  externalEventId: z.string().min(1).optional(),
+  lastSyncedHash: z.string().min(1).optional(),
+  lastSyncedAt: z.string().min(1).optional(),
+});
+
+export const calendarStateSchema = z.object({
+  itemIdentities: z.record(z.string().min(1)).default({}),
+  itemOverrides: z.record(calendarItemOverrideSchema).default({}),
+  syncRecords: z.record(calendarSyncRecordSchema).default({}),
+});
+
 export const roadmapSettingsSchema = z.object({
   defaultDurationBuffer: z.number().finite().positive().default(1.3),
   defaultPriority: z.enum(PRIORITIES).default('medium'),
@@ -191,6 +208,7 @@ export const roadmapSettingsSchema = z.object({
   horizonOverduePreviewLimit: z.number().int().min(1).max(50).default(5),
   colors: colorSettingsSchema.default({}),
   calendar: calendarSettingsSchema.default({}),
+  calendarState: calendarStateSchema.default({}),
 });
 
 export type NodeType = (typeof NODE_TYPES)[number];
@@ -206,6 +224,9 @@ export type SourceScopeRule = z.infer<typeof sourceScopeRuleSchema>;
 export type CalendarPolicy = z.infer<typeof calendarPolicySchema>;
 export type CalendarReminderPolicy = z.infer<typeof calendarReminderPolicySchema>;
 export type CalendarSettings = z.infer<typeof calendarSettingsSchema>;
+export type CalendarItemOverride = z.infer<typeof calendarItemOverrideSchema>;
+export type CalendarSyncRecord = z.infer<typeof calendarSyncRecordSchema>;
+export type CalendarState = z.infer<typeof calendarStateSchema>;
 export type RoadmapNodeFrontmatter = z.infer<typeof roadmapNodeFrontmatterSchema>;
 export type InlineTask = z.infer<typeof inlineTaskSchema>;
 export type RoadmapSettings = z.infer<typeof roadmapSettingsSchema>;

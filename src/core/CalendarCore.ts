@@ -1,5 +1,6 @@
 import type {
   CalendarPolicy,
+  CalendarItemOverride,
   CalendarReminderPolicy,
   CalendarSemanticType,
   RoadmapNode,
@@ -11,8 +12,6 @@ import {
   isNodeOverdue,
   validDate,
 } from './TimelineDomain';
-
-export type CalendarItemOverride = 'include' | 'exclude';
 
 export interface CalendarProjectionOptions {
   readonly automaticallyInclude: CalendarPolicy;

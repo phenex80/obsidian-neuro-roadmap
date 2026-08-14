@@ -1,4 +1,4 @@
-import { App, Modal, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { App, Modal, Plugin, PluginSettingTab, Setting, TFile } from 'obsidian';
 import {
   CANONICAL_PROPERTY_FIELDS,
   PRIORITIES,
@@ -7,9 +7,11 @@ import {
   roadmapSettingsSchema,
   type CanonicalPropertyField,
   type ColorSettings,
+  type CalendarItemOverride,
   type Priority,
   type PropertyMappings,
   type RoadmapSettings,
+  type RoadmapNode,
   type SemanticValueMappings,
   type SourceScopeMode,
 } from './types';
@@ -23,6 +25,7 @@ import {
 } from './core/SemanticMapping';
 import { RoadmapScheduler } from './core/RoadmapScheduler';
 import { compileSourceScope, hasValidSourceScopeRules } from './core/SourceScope';
+import { CalendarIdentityManager } from './core/CalendarIdentity';
 import {
   migrateRoadmapSettingsData,
   withoutRoadmapTemplateValue,
@@ -54,6 +57,14 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
   settings: RoadmapSettings = DEFAULT_SETTINGS;
   readonly indexer = new RoadmapIndexer(this.app);
   readonly scheduler = new RoadmapScheduler(this.app, this.indexer);
+  readonly calendarIdentity = new CalendarIdentityManager(
+    this.app,
+    () => this.settings.calendarState.itemIdentities,
+    async (itemIdentities) => {
+      this.settings.calendarState.itemIdentities = itemIdentities;
+      await this.saveSettings();
+    },
+  );
   private readonly settingsListeners = new Set<SettingsListener>();
 
   async onload(): Promise<void> {
@@ -63,6 +74,13 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     this.scheduler.setCreationPropertyKeys(parserOptions.propertyKeys);
     await this.indexer.initialize();
     this.indexer.registerEvents((eventRef) => this.registerEvent(eventRef));
+    this.registerEvent(
+      this.app.vault.on('rename', (file, oldPath) => {
+        if (file instanceof TFile && file.extension.toLocaleLowerCase() === 'md') {
+          void this.calendarIdentity.handleFileRename(oldPath, file.path);
+        }
+      }),
+    );
     this.registerView(VIEW_TYPE_NEURO_ROADMAP, (leaf) => new GlobalItemView(leaf, this));
     registerRoadmapCodeblockProcessor(this, this.app, this.indexer);
     this.addRibbonIcon('git-branch', 'Open Neuro Roadmap', () => {
@@ -115,6 +133,29 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     return () => {
       this.settingsListeners.delete(listener);
     };
+  }
+
+  getCalendarOverride(node: RoadmapNode): CalendarItemOverride | undefined {
+    const itemId = this.calendarIdentity.findIdentity(node);
+    return itemId === undefined ? undefined : this.settings.calendarState.itemOverrides[itemId];
+  }
+
+  async setCalendarOverride(
+    node: RoadmapNode,
+    override: CalendarItemOverride | null,
+  ): Promise<void> {
+    const identity = await this.calendarIdentity.ensureIdentity(node);
+    if (identity === null) {
+      return;
+    }
+    const itemOverrides = { ...this.settings.calendarState.itemOverrides };
+    if (override === null) {
+      delete itemOverrides[identity.internalItemId];
+    } else {
+      itemOverrides[identity.internalItemId] = override;
+    }
+    this.settings.calendarState.itemOverrides = itemOverrides;
+    await this.saveSettings();
   }
 
   getParserOptions(): RoadmapParserOptions {
