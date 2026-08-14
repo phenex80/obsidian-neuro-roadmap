@@ -11,6 +11,14 @@ import {
 } from '../src/core/SemanticMapping';
 import { propertyMappingSchema, semanticValueMappingSchema } from '../src/types';
 import { replaceTaskCheckbox } from '../src/core/MarkdownTask';
+import {
+  buildTimelineOverview,
+  createTimelineDomain,
+  isNodeOverdue,
+} from '../src/core/TimelineDomain';
+import type { RoadmapNode } from '../src/types';
+import { DependencyEngine } from '../src/core/DependencyEngine';
+import type { RoadmapIndexer } from '../src/core/Indexer';
 
 const metadataCache = {
   getFirstLinkpathDest: () => null,
@@ -122,6 +130,49 @@ test('checkbox mutation changes only the original Markdown marker', () => {
   assert.equal(replaceTaskCheckbox(completed, false), task);
 });
 
+test('derived overdue state never replaces the persistent task status', () => {
+  const node = createNode('late', { dueDate: '2026-01-01', status: 'in-progress' });
+  assert.equal(isNodeOverdue(node, '2026-01-02'), true);
+  assert.equal(node.status, 'in-progress');
+  assert.equal(isNodeOverdue({ ...node, completed: true, status: 'done' }, '2026-01-02'), false);
+});
+
+test('overview density stays bounded for 5, 50, and 200 tasks', () => {
+  for (const count of [5, 50, 200]) {
+    const nodes = Array.from({ length: count }, (_, index) =>
+      createNode(`task-${index}`, {
+        startDate: `2026-09-${String((index % 28) + 1).padStart(2, '0')}`,
+        dueDate: `2026-09-${String((index % 28) + 1).padStart(2, '0')}`,
+      }),
+    );
+    const domain = createTimelineDomain(nodes, 30, '2026-09-01');
+    const overview = buildTimelineOverview(nodes, domain, 24, '2026-09-15');
+    assert.ok(overview.length <= 24);
+    assert.equal(overview.flatMap((item) => item.nodes).length, count);
+  }
+});
+
+test('automatic dependency propagation never shifts a fixed downstream deadline', () => {
+  const moved = createNode('moved', { startDate: '2026-09-01', dueDate: '2026-09-03' });
+  const soft = createNode('soft', { startDate: '2026-09-04', dueDate: '2026-09-05' });
+  const fixed = createNode('fixed', {
+    startDate: '2026-09-06',
+    dueDate: '2026-09-06',
+    hardDependency: true,
+  });
+  const indexer = {
+    getDependents: (nodeId: string) => nodeId === moved.id ? [soft, fixed] : [],
+  } as RoadmapIndexer;
+  const updates = new DependencyEngine(indexer).calculateSoftDependencyUpdates(
+    moved,
+    '2026-09-03',
+  );
+
+  assert.deepEqual(updates.map((update) => update.node.id), ['soft']);
+  assert.equal(updates[0]?.startDate, '2026-09-06');
+  assert.equal(updates[0]?.dueDate, '2026-09-07');
+});
+
 function createFile(path: string): TFile {
   const filename = path.split('/').at(-1) ?? path;
   return {
@@ -144,5 +195,26 @@ function createCache(
       },
       parent: -1,
     })),
+  };
+}
+
+function createNode(
+  id: string,
+  overrides: Partial<RoadmapNode> = {},
+): RoadmapNode {
+  return {
+    id,
+    path: `${id}.md`,
+    title: id,
+    type: 'task',
+    durationBuffer: 1.3,
+    priority: 'medium',
+    status: 'todo',
+    dependsOn: [],
+    hardDependency: false,
+    source: 'inline',
+    completed: false,
+    writeKeys: { startDate: 'start', dueDate: 'due', status: 'status' },
+    ...overrides,
   };
 }

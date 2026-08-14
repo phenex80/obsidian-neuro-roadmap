@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { App } from 'obsidian';
-  import type { RoadmapNode } from '../../types';
+  import { roadmapSettingsSchema, type RoadmapNode, type RoadmapSettings } from '../../types';
   import type { RoadmapIndexer } from '../../core/Indexer';
   import type { RoadmapScheduler } from '../../core/RoadmapScheduler';
   import { exportToICS } from '../../utils/icsExport';
@@ -16,17 +16,18 @@
     app,
     indexer,
     scheduler,
-    enableColorCoding: initialEnableColorCoding,
-    subscribeColorCoding,
+    initialSettings,
+    subscribeSettings,
   }: {
     app: App;
     indexer: RoadmapIndexer;
     scheduler: RoadmapScheduler;
-    enableColorCoding: boolean;
-    subscribeColorCoding: (listener: (enabled: boolean) => void) => () => void;
+    initialSettings: Readonly<RoadmapSettings>;
+    subscribeSettings: (listener: (settings: Readonly<RoadmapSettings>) => void) => () => void;
   } = $props();
   let nodes = $state<readonly RoadmapNode[]>([]);
-  let enableColorCoding = $state(false);
+  let settings = $state<RoadmapSettings>(roadmapSettingsSchema.parse({}));
+  let enableColorCoding = $derived(settings.enableColorCoding);
   let semester = $state('all');
   let selectedSubjects = $state<string[]>([]);
   let priority = $state<'all' | 'high' | 'medium' | 'low'>('all');
@@ -66,18 +67,18 @@
   );
 
   onMount(() => {
-    enableColorCoding = initialEnableColorCoding;
+    settings = cloneSettings(initialSettings);
     const unsubscribeIndexer = indexer.subscribe((updatedNodes) => {
       nodes = updatedNodes;
       circularDependencyCycles = indexer.getCircularDependencyCycles();
     });
-    const unsubscribeColorCoding = subscribeColorCoding((enabled) => {
-      enableColorCoding = enabled;
+    const unsubscribeSettings = subscribeSettings((updatedSettings) => {
+      settings = cloneSettings(updatedSettings);
     });
 
     return () => {
       unsubscribeIndexer();
-      unsubscribeColorCoding();
+      unsubscribeSettings();
     };
   });
 
@@ -119,9 +120,21 @@
       URL.revokeObjectURL(url);
     }
   }
+
+  function cloneSettings(value: Readonly<RoadmapSettings>): RoadmapSettings {
+    return {
+      ...value,
+      propertyMappings: { ...value.propertyMappings },
+      valueMappings: { ...value.valueMappings },
+      colors: { ...value.colors },
+    };
+  }
 </script>
 
-<main class="roadmap-workspace">
+<main
+  class="roadmap-workspace"
+  style={`--status-todo: ${settings.colors.todo}; --status-in-progress: ${settings.colors.inProgress}; --status-done: ${settings.colors.done}; --status-overdue: ${settings.colors.overdue}; --priority-high: ${settings.colors.priorityHigh}; --priority-medium: ${settings.colors.priorityMedium}; --priority-low: ${settings.colors.priorityLow}`}
+>
   <header class="app-header">
     <div class="control-group view-control">
       <span class="control-label">View</span>
@@ -224,6 +237,8 @@
           onSchedule={(node, startDate, dueDate) => scheduler.scheduleUnscheduledNode(node, startDate, dueDate)}
           onCreate={(startDate, dueDate) => scheduler.createNode(startDate, dueDate)}
           onEdit={openScratchpad}
+          onToggleComplete={(node, completed) => scheduler.setTaskCompletion(node, completed).then(() => undefined)}
+          onOpenSource={(node) => scheduler.openSource(node)}
         />
       {:else}
         <HorizonBoard nodes={filteredNodes} {enableColorCoding} onEdit={openScratchpad} />
@@ -243,15 +258,6 @@
 {/if}
 
 <style>
-  :global(:root) {
-    --status-todo: #579bfc;
-    --status-in-progress: #fdab3d;
-    --status-done: #00c875;
-    --priority-high: #e2445c;
-    --priority-medium: #fdab3d;
-    --priority-low: #c4c4c4;
-  }
-
   .roadmap-workspace {
     display: grid;
     align-content: start;

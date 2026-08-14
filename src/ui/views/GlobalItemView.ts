@@ -2,6 +2,7 @@ import { ItemView, type WorkspaceLeaf } from 'obsidian';
 import { mount, unmount } from 'svelte';
 import Component from './Component.svelte';
 import type NeuroAdaptiveRoadmapPlugin from '../../main';
+import type { RoadmapSettings } from '../../types';
 
 export const VIEW_TYPE_NEURO_ROADMAP = 'neuro-adaptive-roadmap';
 
@@ -34,9 +35,9 @@ export class GlobalItemView extends ItemView {
         app: this.app,
         indexer: this.plugin.indexer,
         scheduler: this.plugin.scheduler,
-        enableColorCoding: this.plugin.settings.enableColorCoding,
-        subscribeColorCoding: (listener: (enabled: boolean) => void) =>
-          this.plugin.subscribeSettings((settings) => listener(settings.enableColorCoding)),
+        initialSettings: this.plugin.settings,
+        subscribeSettings: (listener: (settings: Readonly<RoadmapSettings>) => void) =>
+          this.plugin.subscribeSettings(listener),
       },
     });
   }
