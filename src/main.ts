@@ -8,6 +8,7 @@ import {
   type CanonicalPropertyField,
   type ColorSettings,
   type CalendarItemOverride,
+  type CalendarSemanticType,
   type Priority,
   type PropertyMappings,
   type RoadmapSettings,
@@ -26,6 +27,8 @@ import {
 import { RoadmapScheduler } from './core/RoadmapScheduler';
 import { compileSourceScope, hasValidSourceScopeRules } from './core/SourceScope';
 import { CalendarIdentityManager } from './core/CalendarIdentity';
+import { CalendarExportService, type CalendarExportResult } from './core/CalendarExportService';
+import { IcsCalendarProvider } from './calendar/IcsCalendarProvider';
 import {
   migrateRoadmapSettingsData,
   withoutRoadmapTemplateValue,
@@ -52,6 +55,14 @@ const PROPERTY_LABELS: Readonly<Record<CanonicalPropertyField, string>> = {
   hardDependency: 'Hard / fixed date',
 };
 type SettingsListener = (settings: Readonly<RoadmapSettings>) => void;
+const CALENDAR_TYPE_LABELS: Readonly<Record<CalendarSemanticType, string>> = {
+  exam: 'Exams',
+  'assignment-deadline': 'Assignment deadlines',
+  'project-deadline': 'Project deadlines',
+  milestone: 'Milestones',
+  presentation: 'Presentations',
+  'regular-task': 'Regular tasks',
+};
 
 export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
   settings: RoadmapSettings = DEFAULT_SETTINGS;
@@ -64,6 +75,10 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
       this.settings.calendarState.itemIdentities = itemIdentities;
       await this.saveSettings();
     },
+  );
+  readonly calendarExporter = new CalendarExportService(
+    this.calendarIdentity,
+    new IcsCalendarProvider(),
   );
   private readonly settingsListeners = new Set<SettingsListener>();
 
@@ -156,6 +171,14 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     }
     this.settings.calendarState.itemOverrides = itemOverrides;
     await this.saveSettings();
+  }
+
+  async exportCalendar(nodes: readonly RoadmapNode[]): Promise<CalendarExportResult> {
+    return this.calendarExporter.export(nodes, {
+      settings: this.settings.calendar,
+      state: this.settings.calendarState,
+      vaultName: this.app.vault.getName(),
+    });
   }
 
   getParserOptions(): RoadmapParserOptions {
@@ -378,6 +401,42 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
       },
     );
 
+    containerEl.createEl('h3', { text: 'Calendar' });
+    containerEl.createEl('p', {
+      text: 'Calendar is a one-way projection of meaningful roadmap dates. Markdown remains the source of truth.',
+      cls: 'setting-item-description',
+    });
+    for (const type of Object.keys(CALENDAR_TYPE_LABELS) as CalendarSemanticType[]) {
+      new Setting(containerEl)
+        .setName(CALENDAR_TYPE_LABELS[type])
+        .setDesc(`Automatically include ${CALENDAR_TYPE_LABELS[type].toLocaleLowerCase()} with a usable date.`)
+        .addToggle((toggle) =>
+          toggle
+            .setValue(this.plugin.settings.calendar.automaticallyInclude[type])
+            .onChange(async (value) => {
+              this.plugin.settings.calendar.automaticallyInclude[type] = value;
+              await this.plugin.saveSettings();
+            }),
+        );
+    }
+
+    new Setting(containerEl)
+      .setName('Enable calendar reminders')
+      .setDesc('Include RFC 5545 VALARM reminders using the policy for each semantic type.')
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.calendar.remindersEnabled)
+          .onChange(async (value) => {
+            this.plugin.settings.calendar.remindersEnabled = value;
+            await this.plugin.saveSettings();
+            this.display();
+          }),
+      );
+
+    if (this.plugin.settings.calendar.remindersEnabled) {
+      this.addCalendarReminderSettings(containerEl);
+    }
+
     containerEl.createEl('h3', { text: 'Colors' });
     this.addColorSettings(containerEl, this.plugin.settings.colors);
   }
@@ -502,6 +561,35 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           }),
         );
+    }
+  }
+
+  private addCalendarReminderSettings(containerEl: HTMLElement): void {
+    const options: readonly [string, string][] = [
+      ['none', 'No reminder'],
+      ['0', 'At event time'],
+      ['60', '1 hour before'],
+      ['1440', '1 day before'],
+      ['2880', '2 days before'],
+      ['10080', '1 week before'],
+    ];
+    for (const type of Object.keys(CALENDAR_TYPE_LABELS) as CalendarSemanticType[]) {
+      new Setting(containerEl)
+        .setName(`${CALENDAR_TYPE_LABELS[type]} reminder`)
+        .setDesc('Reminder timing for exported calendar events of this type.')
+        .addDropdown((dropdown) => {
+          for (const [value, label] of options) {
+            dropdown.addOption(value, label);
+          }
+          const current = this.plugin.settings.calendar.reminderMinutes[type];
+          dropdown
+            .setValue(current === null ? 'none' : String(current))
+            .onChange(async (value) => {
+              this.plugin.settings.calendar.reminderMinutes[type] =
+                value === 'none' ? null : Number(value);
+              await this.plugin.saveSettings();
+            });
+        });
     }
   }
 

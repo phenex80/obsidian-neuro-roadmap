@@ -1,10 +1,16 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { App } from 'obsidian';
-  import { roadmapSettingsSchema, type RoadmapNode, type RoadmapSettings } from '../../types';
+  import {
+    roadmapSettingsSchema,
+    type CalendarItemOverride,
+    type RoadmapNode,
+    type RoadmapSettings,
+  } from '../../types';
   import type { RoadmapIndexer } from '../../core/Indexer';
   import type { RoadmapScheduler } from '../../core/RoadmapScheduler';
-  import { exportToICS } from '../../utils/icsExport';
+  import { calendarCommitmentDate, isCalendarEligible } from '../../core/CalendarCore';
+  import type { CalendarExportResult } from '../../core/CalendarExportService';
   import DashboardView from '../components/DashboardView.svelte';
   import GanttCanvas from '../components/GanttCanvas.svelte';
   import HorizonBoard from '../components/HorizonBoard.svelte';
@@ -18,12 +24,18 @@
     scheduler,
     initialSettings,
     subscribeSettings,
+    getCalendarOverride,
+    setCalendarOverride,
+    exportCalendar,
   }: {
     app: App;
     indexer: RoadmapIndexer;
     scheduler: RoadmapScheduler;
     initialSettings: Readonly<RoadmapSettings>;
     subscribeSettings: (listener: (settings: Readonly<RoadmapSettings>) => void) => () => void;
+    getCalendarOverride: (node: RoadmapNode) => CalendarItemOverride | undefined;
+    setCalendarOverride: (node: RoadmapNode, override: CalendarItemOverride | null) => Promise<void>;
+    exportCalendar: (nodes: readonly RoadmapNode[]) => Promise<CalendarExportResult>;
   } = $props();
   let nodes = $state<readonly RoadmapNode[]>([]);
   let settings = $state<RoadmapSettings>(roadmapSettingsSchema.parse({}));
@@ -35,6 +47,7 @@
   let scale = $state<'days' | 'weeks' | 'months'>('days');
   let scratchpadNode = $state<RoadmapNode | null>(null);
   let circularDependencyCycles = $state<readonly (readonly string[])[]>([]);
+  let exportingCalendar = $state(false);
   const PRIORITY_FILTERS = ['all', 'high', 'medium', 'low'] as const;
   const TIMELINE_SCALES = ['days', 'weeks', 'months'] as const;
 
@@ -103,13 +116,47 @@
     }
   }
 
-  function downloadCalendar(): void {
-    const calendar = exportToICS([...filteredNodes]);
-    const blob = new Blob([calendar], { type: 'text/calendar' });
+  function calendarOverride(node: RoadmapNode): CalendarItemOverride | undefined {
+    return getCalendarOverride(node);
+  }
+
+  function calendarIncluded(node: RoadmapNode): boolean {
+    return isCalendarEligible(node, {
+      automaticallyInclude: settings.calendar.automaticallyInclude,
+      remindersEnabled: settings.calendar.remindersEnabled,
+      reminderMinutes: settings.calendar.reminderMinutes,
+      override: calendarOverride(node),
+    });
+  }
+
+  function calendarAvailable(node: RoadmapNode): boolean {
+    return calendarCommitmentDate(node) !== null;
+  }
+
+  async function toggleCalendarOverride(node: RoadmapNode): Promise<void> {
+    const currentOverride = calendarOverride(node);
+    const nextOverride = currentOverride !== undefined
+      ? null
+      : calendarIncluded(node)
+        ? 'exclude'
+        : 'include';
+    await setCalendarOverride(node, nextOverride);
+  }
+
+  async function downloadCalendar(scope: 'current' | 'all'): Promise<void> {
+    if (exportingCalendar) return;
+    exportingCalendar = true;
+    let result: CalendarExportResult;
+    try {
+      result = await exportCalendar(scope === 'current' ? filteredNodes : nodes);
+    } finally {
+      exportingCalendar = false;
+    }
+    const blob = new Blob([result.content], { type: 'text/calendar;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = 'roadmap-export.ics';
+    anchor.download = scope === 'current' ? 'roadmap-current-view.ics' : 'roadmap-all-eligible.ics';
     anchor.hidden = true;
     document.body.appendChild(anchor);
 
@@ -228,7 +275,18 @@
       </div>
     </div>
 
-    <button type="button" class="export-button" onclick={downloadCalendar}>Export (.ics)</button>
+    <details class="calendar-control">
+      <summary>Calendar</summary>
+      <div class="calendar-menu">
+        <button type="button" disabled={exportingCalendar} onclick={() => void downloadCalendar('current')}>
+          Export current view (.ics)
+        </button>
+        <button type="button" disabled={exportingCalendar} onclick={() => void downloadCalendar('all')}>
+          Export all eligible items (.ics)
+        </button>
+        <span>Policy and reminders are configured in Neuro Roadmap settings.</span>
+      </div>
+    </details>
 
   </header>
 
@@ -251,6 +309,10 @@
           onEdit={openScratchpad}
           onToggleComplete={(node, completed) => scheduler.setTaskCompletion(node, completed).then(() => undefined)}
           onOpenSource={(node) => scheduler.openSource(node)}
+          getCalendarOverride={calendarOverride}
+          isCalendarIncluded={calendarIncluded}
+          isCalendarAvailable={calendarAvailable}
+          onToggleCalendar={toggleCalendarOverride}
         />
       {:else}
         <HorizonBoard
@@ -262,6 +324,10 @@
           onEdit={openScratchpad}
           onToggleComplete={(node, completed) => scheduler.setTaskCompletion(node, completed).then(() => undefined)}
           onOpenSource={(node) => scheduler.openSource(node)}
+          getCalendarOverride={calendarOverride}
+          isCalendarIncluded={calendarIncluded}
+          isCalendarAvailable={calendarAvailable}
+          onToggleCalendar={toggleCalendarOverride}
         />
       {/if}
     </div>
@@ -271,6 +337,10 @@
       onEdit={openScratchpad}
       onToggleComplete={(node, completed) => scheduler.setTaskCompletion(node, completed).then(() => undefined)}
       onOpenSource={(node) => scheduler.openSource(node)}
+      getCalendarOverride={calendarOverride}
+      isCalendarIncluded={calendarIncluded}
+      isCalendarAvailable={calendarAvailable}
+      onToggleCalendar={toggleCalendarOverride}
     />
   </div>
 </main>
@@ -338,6 +408,52 @@
 
   .subject-control {
     position: relative;
+  }
+
+  .calendar-control {
+    position: relative;
+  }
+
+  .calendar-control summary {
+    min-height: var(--input-height);
+    padding-inline: var(--size-4-2);
+    border: var(--border-width) solid var(--border-color);
+    border-radius: var(--radius-m);
+    background: var(--background-primary-alt);
+    color: var(--text-normal);
+    line-height: var(--input-height);
+    list-style: none;
+    cursor: pointer;
+  }
+
+  .calendar-control summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .calendar-menu {
+    position: absolute;
+    top: calc(100% + var(--size-2-2));
+    right: 0;
+    z-index: 30;
+    display: grid;
+    width: max-content;
+    max-width: min(24rem, 85vw);
+    gap: var(--size-2-2);
+    padding: var(--size-4-2);
+    border: var(--border-width) solid var(--border-color);
+    border-radius: var(--radius-m);
+    background: var(--background-primary);
+    box-shadow: var(--shadow-l);
+  }
+
+  .calendar-menu button {
+    justify-content: flex-start;
+    text-align: left;
+  }
+
+  .calendar-menu span {
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
   }
 
   .subject-control summary {
@@ -451,23 +567,6 @@
 
   .view-control {
     margin-inline-start: 0;
-  }
-
-  .export-button {
-    padding: var(--size-2-2) var(--size-4-2);
-    border: var(--border-width) solid var(--border-color);
-    border-radius: var(--radius-m);
-    background: var(--background-secondary);
-    color: var(--text-muted);
-    font: inherit;
-    cursor: pointer;
-  }
-
-  .export-button:hover,
-  .export-button:focus-visible {
-    border-color: var(--interactive-accent);
-    background: var(--background-modifier-hover);
-    color: var(--text-normal);
   }
 
   .roadmap-layout {

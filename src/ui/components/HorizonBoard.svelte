@@ -1,6 +1,6 @@
 <script lang="ts">
   import { classifyHorizon, formatRelativeTaskDate } from '../../core/HorizonPlanner';
-  import type { RoadmapNode } from '../../types';
+  import type { CalendarItemOverride, RoadmapNode } from '../../types';
   import TaskCard from './TaskCard.svelte';
 
   type HorizonColumn = 'now' | 'next' | 'later';
@@ -15,6 +15,10 @@
     onEdit,
     onToggleComplete,
     onOpenSource,
+    getCalendarOverride,
+    isCalendarIncluded,
+    isCalendarAvailable,
+    onToggleCalendar,
   }: {
     nodes: readonly RoadmapNode[];
     enableColorCoding: boolean;
@@ -24,6 +28,10 @@
     onEdit: (node: RoadmapNode) => void;
     onToggleComplete: (node: RoadmapNode, completed: boolean) => Promise<void>;
     onOpenSource: (node: RoadmapNode) => Promise<void>;
+    getCalendarOverride: (node: RoadmapNode) => CalendarItemOverride | undefined;
+    isCalendarIncluded: (node: RoadmapNode) => boolean;
+    isCalendarAvailable: (node: RoadmapNode) => boolean;
+    onToggleCalendar: (node: RoadmapNode) => Promise<void>;
   } = $props();
   let showAllOverdue = $state(false);
   let plan = $derived(classifyHorizon(nodes, { nextDays, criticalDays }));
@@ -76,6 +84,10 @@
               {onToggleComplete}
               {onOpenSource}
               {onEdit}
+              calendarOverride={getCalendarOverride(node)}
+              calendarIncluded={isCalendarIncluded(node)}
+              calendarAvailable={isCalendarAvailable(node)}
+              {onToggleCalendar}
             />
           {/each}
         {/if}

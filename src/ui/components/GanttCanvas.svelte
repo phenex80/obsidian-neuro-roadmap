@@ -13,7 +13,7 @@
     validDate,
     type TimelineOverviewItem,
   } from '../../core/TimelineDomain';
-  import type { RoadmapNode } from '../../types';
+  import type { CalendarItemOverride, RoadmapNode } from '../../types';
 
   let {
     nodes,
@@ -25,6 +25,10 @@
     onEdit,
     onToggleComplete,
     onOpenSource,
+    getCalendarOverride,
+    isCalendarIncluded,
+    isCalendarAvailable,
+    onToggleCalendar,
   }: {
     nodes: readonly RoadmapNode[];
     scale: 'days' | 'weeks' | 'months';
@@ -35,6 +39,10 @@
     onEdit: (node: RoadmapNode) => void;
     onToggleComplete: (node: RoadmapNode, completed: boolean) => Promise<void>;
     onOpenSource: (node: RoadmapNode) => Promise<void>;
+    getCalendarOverride: (node: RoadmapNode) => CalendarItemOverride | undefined;
+    isCalendarIncluded: (node: RoadmapNode) => boolean;
+    isCalendarAvailable: (node: RoadmapNode) => boolean;
+    onToggleCalendar: (node: RoadmapNode) => Promise<void>;
   } = $props();
 
   const EMPTY_ROW_COUNT = 3;
@@ -536,6 +544,16 @@
     ].filter((line) => line.length > 0).join('\n');
   }
 
+  function calendarActionLabel(node: RoadmapNode): string {
+    if (!isCalendarAvailable(node)) return 'Add a date before using Calendar';
+    const override = getCalendarOverride(node);
+    if (override === 'include') return 'Included by override · Use automatic calendar policy';
+    if (override === 'exclude') return 'Excluded by override · Use automatic calendar policy';
+    return isCalendarIncluded(node)
+      ? 'Synced to calendar · Exclude from calendar'
+      : 'Add to calendar';
+  }
+
   function clearPointerState(): void {
     draggedNode = null;
     dragStartX = null;
@@ -632,6 +650,17 @@
                   aria-label={`Quick note for ${row.label}`}
                   onclick={() => onEdit(taskNode)}
                 >✎</button>
+                <button
+                  type="button"
+                  class="task-action calendar-action"
+                  class:included={isCalendarIncluded(taskNode)}
+                  class:excluded={getCalendarOverride(taskNode) === 'exclude'}
+                  title={calendarActionLabel(taskNode)}
+                  aria-label={`${calendarActionLabel(taskNode)}: ${formatNodeTitle(taskNode)}`}
+                  aria-pressed={isCalendarIncluded(taskNode)}
+                  disabled={!isCalendarAvailable(taskNode)}
+                  onclick={() => void onToggleCalendar(taskNode)}
+                >{getCalendarOverride(taskNode) === 'exclude' ? '⊘' : isCalendarIncluded(taskNode) ? '◉' : '○'}</button>
               </div>
             {/if}
           {/each}
@@ -899,7 +928,7 @@
 
   .task-row {
     display: grid;
-    grid-template-columns: min-content minmax(0, 1fr) min-content;
+    grid-template-columns: min-content minmax(0, 1fr) min-content min-content;
     align-items: center;
     gap: var(--size-2-1);
     padding-inline: var(--size-4-2);
@@ -932,7 +961,8 @@
   }
 
   .checkbox-action,
-  .scratchpad-action {
+  .scratchpad-action,
+  .calendar-action {
     display: inline-grid;
     place-items: center;
     padding: var(--size-2-1);
@@ -941,8 +971,17 @@
   }
 
   .checkbox-action:hover,
-  .scratchpad-action:hover {
+  .scratchpad-action:hover,
+  .calendar-action:hover {
     color: var(--interactive-accent) !important;
+  }
+
+  .calendar-action.included {
+    color: var(--interactive-accent) !important;
+  }
+
+  .calendar-action.excluded {
+    color: var(--text-faint) !important;
   }
 
   .action-spacer {
@@ -1298,7 +1337,7 @@
     }
 
     .task-row {
-      grid-template-columns: min-content minmax(0, 1fr);
+      grid-template-columns: min-content minmax(0, 1fr) min-content;
     }
   }
 </style>

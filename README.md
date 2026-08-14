@@ -10,6 +10,14 @@ Neuro Roadmap is an Obsidian Community Plugin that turns ordinary Markdown notes
 
 The Gantt and Horizon views can check or uncheck real Markdown tasks and open their source note. Dragging updates mapped date properties atomically; fixed downstream deadlines are excluded from automatic dependency propagation.
 
+## Calendar and ICS
+
+Calendar is a one-way projection from the Markdown-backed roadmap. Exams, assignment deadlines, project deadlines, milestones, and presentations are included by default; regular tasks are opt-in. Per-item include/exclude actions are stored in plugin state rather than written as YAML properties.
+
+The Calendar toolbar menu distinguishes **Export current view** from **Export all eligible items**. Exported RFC 5545 files use stable UIDs, all-day deadline events with exclusive end dates, transparent availability, optional type-specific reminders, escaped Unicode text, and source links back to Obsidian.
+
+Inline tasks receive a compact Obsidian block ID only when a calendar operation first needs stable identity. Provider IDs and sync metadata remain in plugin-managed state. No Microsoft or Google network integration is performed in this release.
+
 ## Markdown data
 
 Both unchecked and completed tasks are indexed:

@@ -24,6 +24,7 @@ import { isCalendarEligible, projectCalendarEvent } from '../src/core/CalendarCo
 import { CalendarIdentityManager, calendarItemLocator } from '../src/core/CalendarIdentity';
 import { exportCalendarEventsToICS, IcsCalendarProvider } from '../src/calendar/IcsCalendarProvider';
 import type { CalendarEventProjection } from '../src/core/CalendarCore';
+import { CalendarExportService } from '../src/core/CalendarExportService';
 import { buildSubjectSummaries } from '../src/core/DashboardMetrics';
 import { classifyHorizon, formatRelativeTaskDate } from '../src/core/HorizonPlanner';
 import { migrateRoadmapSettingsData } from '../src/core/SettingsMigration';
@@ -99,6 +100,25 @@ test('completed and overdue items retain calendar projection semantics', () => {
   assert.equal(completed?.overdue, false);
   assert.equal(overdue?.overdue, true);
   assert.match(overdue?.description ?? '', /Overdue: yes/u);
+});
+
+test('parser maps calendar semantic types without changing roadmap node eligibility', () => {
+  const parser = new RoadmapParser(metadataCache, createDefaultParserOptions());
+  const exam = parser.parseFile(
+    createFile('Subjects/Exam.md'),
+    createCache({ typ: 'skúška', deadline: '2026-12-10' }, []),
+    '',
+  )[0];
+  const presentation = parser.parseFile(
+    createFile('Subjects/Presentation.md'),
+    createCache({ typ: 'task', calendar_type: 'prezentácia', deadline: '2026-11-10' }, []),
+    '',
+  )[0];
+
+  assert.equal(exam?.type, 'task');
+  assert.equal(exam?.calendarType, 'exam');
+  assert.equal(presentation?.type, 'task');
+  assert.equal(presentation?.calendarType, 'presentation');
 });
 
 test('calendar identity survives title and date changes', async () => {
@@ -247,6 +267,49 @@ test('ICS provider advertises file-only capabilities without remote APIs', async
     delete: false,
     reminders: true,
   });
+});
+
+test('calendar export service distinguishes filtered selection from all eligible items', async () => {
+  let records: Record<string, string> = {};
+  let sequence = 0;
+  const identities = new CalendarIdentityManager(
+    {} as App,
+    () => records,
+    async (nextRecords) => { records = nextRecords; },
+    () => `export-id-${++sequence}`,
+  );
+  const provider = new IcsCalendarProvider({
+    now: () => new Date('2026-08-15T10:20:30.000Z'),
+  });
+  const service = new CalendarExportService(identities, provider);
+  const roadmapSettings = roadmapSettingsSchema.parse({});
+  const context = {
+    settings: roadmapSettings.calendar,
+    state: roadmapSettings.calendarState,
+    vaultName: 'Academic Vault',
+  };
+  const exam = createNode('exam', {
+    source: 'frontmatter',
+    calendarType: 'exam',
+    dueDate: '2026-10-10',
+  });
+  const milestone = createNode('milestone', {
+    source: 'frontmatter',
+    calendarType: 'milestone',
+    dueDate: '2026-11-10',
+  });
+  const regular = createNode('regular', {
+    source: 'frontmatter',
+    calendarType: 'regular-task',
+    dueDate: '2026-12-10',
+  });
+
+  const current = await service.export([exam], context);
+  const all = await service.export([exam, milestone, regular], context);
+  assert.equal(current.eventCount, 1);
+  assert.equal(all.eventCount, 2);
+  assert.equal((current.content.match(/BEGIN:VEVENT/gu) ?? []).length, 1);
+  assert.equal((all.content.match(/BEGIN:VEVENT/gu) ?? []).length, 2);
 });
 
 test('roadmap anchor notes contribute inline tasks but are not task nodes', () => {
