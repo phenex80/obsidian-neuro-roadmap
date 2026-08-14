@@ -144,15 +144,17 @@
   }
 
   .roadmap-card {
-    display: flex;
-    width: 100%;
-    box-sizing: border-box;
-    flex-direction: column;
-    align-items: flex-start;
-    justify-content: flex-start;
+    display: flex !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    justify-content: flex-start !important;
     gap: 8px;
+    height: auto !important;
     min-width: 0;
-    padding: var(--size-4-3);
+    min-height: min-content !important;
+    padding: 12px !important;
     overflow: hidden;
     border: var(--border-width) solid var(--border-color);
     border-radius: var(--radius-m);
@@ -170,18 +172,20 @@
   }
 
   .card-title {
-    display: -webkit-box;
-    width: 100%;
+    display: -webkit-box !important;
+    width: 100% !important;
     flex: 0 0 auto;
-    overflow: hidden;
-    margin-bottom: var(--size-2-2);
+    overflow: hidden !important;
+    padding-bottom: 8px !important;
     color: var(--text-normal);
     font-size: var(--font-ui-medium);
-    font-weight: 600;
-    white-space: normal;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
+    font-weight: 600 !important;
+    line-height: 1.4 !important;
+    text-align: left !important;
+    white-space: normal !important;
+    -webkit-box-orient: vertical !important;
+    -webkit-line-clamp: 2 !important;
+    line-clamp: 2 !important;
   }
 
   .roadmap-card.color-coded.status-todo {
@@ -197,10 +201,11 @@
   }
 
   .metadata-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-top: auto;
+    display: flex !important;
+    width: 100% !important;
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+    margin-top: auto !important;
   }
 
   .metadata-badge {
