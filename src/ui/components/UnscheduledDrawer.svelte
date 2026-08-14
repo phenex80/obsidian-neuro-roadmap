@@ -117,12 +117,16 @@
 
   ul {
     display: grid;
+    width: 100%;
     min-height: 0;
+    box-sizing: border-box;
     flex: 1 1 auto;
     gap: var(--size-4-2);
     padding: 0;
+    overflow-x: hidden;
     overflow-y: auto !important;
     overscroll-behavior: contain;
+    scrollbar-gutter: stable;
     list-style: none;
   }
 

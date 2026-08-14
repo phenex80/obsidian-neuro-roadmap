@@ -176,6 +176,10 @@ export class RoadmapIndexer {
   }
 
   private async readSourceForInlineTasks(file: TFile, cache: CachedMetadata): Promise<string> {
+    if (this.parser.shouldIgnoreFile(cache)) {
+      return '';
+    }
+
     const containsIncompleteTask = cache.listItems?.some((item) => item.task === ' ') ?? false;
     if (!containsIncompleteTask) {
       return '';

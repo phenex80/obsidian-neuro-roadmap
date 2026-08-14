@@ -215,7 +215,7 @@ export class RoadmapParser {
       const title = taskBody
         .replace(INLINE_PROPERTY_PATTERN, '')
         .replace(BLOCK_ID_PATTERN, '')
-        .replace(/[*_#]+/gu, '')
+        .replace(/\\?[*_#]+/gu, '')
         .replace(/\s+/gu, ' ')
         .trim();
       if (title.length === 0) {
