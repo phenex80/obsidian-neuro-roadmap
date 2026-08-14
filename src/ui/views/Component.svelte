@@ -227,7 +227,7 @@
   <div class="roadmap-layout">
     <div class="main-panel">
       {#if viewMode === 'dashboard'}
-        <DashboardView nodes={filteredNodes} />
+        <DashboardView nodes={filteredNodes} {enableColorCoding} />
       {:else if viewMode === 'gantt'}
         <GanttCanvas
           nodes={filteredNodes}

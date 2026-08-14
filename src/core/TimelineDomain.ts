@@ -146,6 +146,19 @@ export function validDate(value: string | undefined): string | null {
     : value;
 }
 
+export function timelineDatePositionPercent(
+  date: string,
+  domain: TimelineDomain,
+  centerOnDay = true,
+): number | null {
+  const valid = validDate(date);
+  if (valid === null || valid < domain.startDate || valid > domain.endDate) {
+    return null;
+  }
+  const dayIndex = daysBetween(domain.startDate, valid);
+  return ((dayIndex + (centerOnDay ? 0.5 : 0)) / domain.dayCount) * 100;
+}
+
 export function isNodeDone(node: RoadmapNode): boolean {
   return node.completed || node.status === 'done';
 }

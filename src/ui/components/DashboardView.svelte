@@ -1,285 +1,281 @@
 <script lang="ts">
+  import {
+    formatEntityLabel,
+    formatNodeTitle,
+    isNodeOverdue,
+    todayDate,
+    type TimelineOverviewItem,
+  } from '../../core/TimelineDomain';
+  import { buildSubjectSummaries } from '../../core/DashboardMetrics';
   import type { RoadmapNode } from '../../types';
 
-  interface SubjectProgress {
-    subject: string;
-    totalTasks: number;
-    completedTasks: number;
-    percent: number;
-    startDate?: string;
-    dueDate?: string;
-    currentDayProgress: number;
-    subjectTasks: readonly MilestoneTask[];
-  }
+  let {
+    nodes,
+    enableColorCoding,
+  }: {
+    nodes: readonly RoadmapNode[];
+    enableColorCoding: boolean;
+  } = $props();
+  let subjectSummaries = $derived(buildSubjectSummaries(nodes));
 
-  interface MilestoneTask {
-    id: string;
-    title: string;
-    dueDate: string;
-    position: number;
-    status: 'done' | 'todo' | 'overdue';
-  }
-
-  let { nodes }: { nodes: readonly RoadmapNode[] } = $props();
-  let subjectProgress = $derived(aggregateBySubject(nodes));
-
-  function aggregateBySubject(items: readonly RoadmapNode[]): SubjectProgress[] {
-    const groups = new Map<string, RoadmapNode[]>();
-
-    for (const node of items) {
-      const subject = node.subject ?? 'Nezaradené';
-      const subjectNodes = groups.get(subject) ?? [];
-      subjectNodes.push(node);
-      groups.set(subject, subjectNodes);
+  function overviewTooltip(item: TimelineOverviewItem): string {
+    if (item.kind === 'cluster') {
+      return `${item.nodes.length} items: ${item.nodes.slice(0, 3).map(formatNodeTitle).join(', ')}${item.nodes.length > 3 ? '…' : ''}`;
     }
-
-    return Array.from(groups.entries())
-      .map(([subject, subjectNodes]) => createSubjectProgress(subject, subjectNodes))
-      .sort((left, right) => formatSubject(left.subject).localeCompare(formatSubject(right.subject)));
-  }
-
-  function createSubjectProgress(subject: string, subjectNodes: readonly RoadmapNode[]): SubjectProgress {
-    const completedTasks = subjectNodes.filter((node) => node.status === 'done').length;
-    const datedNodes = subjectNodes
-      .map((node) => ({ node, taskDate: validDate(node.dueDate ?? node.startDate) }))
-      .filter((entry): entry is { node: RoadmapNode; taskDate: string } => entry.taskDate !== null);
-    const startDates = subjectNodes
-      .map((node) => validDate(node.startDate ?? node.dueDate))
-      .filter((date): date is string => date !== null)
-      .sort();
-    const dueDates = subjectNodes
-      .map((node) => validDate(node.dueDate ?? node.startDate))
-      .filter((date): date is string => date !== null)
-      .sort();
-    const startDate = startDates[0];
-    const dueDate = dueDates.at(-1);
-    const startTimestamp = startDate === undefined ? null : toTimestamp(startDate);
-    const dueTimestamp = dueDate === undefined ? null : toTimestamp(dueDate);
-    const currentTimestamp = todayTimestamp();
-    const subjectTasks =
-      startTimestamp === null || dueTimestamp === null
-        ? []
-        : datedNodes
-            .map(({ node, taskDate }) => {
-              const taskTimestamp = toTimestamp(taskDate);
-              return {
-                id: node.id,
-                title: displayTitle(node),
-                dueDate: taskDate,
-                position: calculateTaskPosition(taskTimestamp, startTimestamp, dueTimestamp),
-                status: milestoneStatus(node, taskTimestamp, currentTimestamp),
-              } satisfies MilestoneTask;
-            })
-            .sort((left, right) => left.position - right.position);
-
-    return {
-      subject,
-      totalTasks: subjectNodes.length,
-      completedTasks,
-      percent: Math.round((completedTasks / subjectNodes.length) * 100),
-      startDate,
-      dueDate,
-      currentDayProgress:
-        startTimestamp === null || dueTimestamp === null
-          ? 0
-          : calculateCurrentDayProgress(currentTimestamp, startTimestamp, dueTimestamp),
-      subjectTasks,
-    };
-  }
-
-  function validDate(value: string | undefined): string | null {
-    if (value === undefined || !/^\d{4}-\d{2}-\d{2}$/u.test(value)) {
-      return null;
-    }
-
-    const timestamp = toTimestamp(value);
-    return Number.isNaN(timestamp) || new Date(timestamp).toISOString().slice(0, 10) !== value
-      ? null
-      : value;
-  }
-
-  function toTimestamp(value: string): number {
-    const [year, month, day] = value.split('-').map(Number);
-    return Date.UTC(year ?? 0, (month ?? 1) - 1, day ?? 1);
-  }
-
-  function todayTimestamp(): number {
-    const now = new Date();
-    return Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
-  }
-
-  function calculateTaskPosition(taskDate: number, startDate: number, dueDate: number): number {
-    if (dueDate === startDate) {
-      return 50;
-    }
-    return clamp(((taskDate - startDate) / (dueDate - startDate)) * 100);
-  }
-
-  function calculateCurrentDayProgress(currentDate: number, startDate: number, dueDate: number): number {
-    if (dueDate === startDate) {
-      return currentDate < startDate ? 0 : 100;
-    }
-    return clamp(((currentDate - startDate) / (dueDate - startDate)) * 100);
-  }
-
-  function clamp(value: number): number {
-    return Math.min(100, Math.max(0, value));
-  }
-
-  function milestoneStatus(
-    node: RoadmapNode,
-    taskDate: number,
-    currentDate: number,
-  ): MilestoneTask['status'] {
-    if (node.status === 'done') {
-      return 'done';
-    }
-    return taskDate < currentDate ? 'overdue' : 'todo';
-  }
-
-  function displayTitle(node: RoadmapNode): string {
-    if (node.title.trim().length > 0) {
-      return node.title;
-    }
-
-    const filename = node.path.split('/').at(-1) ?? '';
-    const basename = filename.endsWith('.md') ? filename.slice(0, -3) : filename;
-    return basename.length > 0 ? basename : 'Neznáma úloha';
-  }
-
-  function formatSubject(subject: string): string {
-    if (subject === 'Nezaradené') {
-      return subject;
-    }
-
-    const filename = subject.split('/').at(-1) ?? subject;
-    return filename.endsWith('.md') ? filename.slice(0, -3) : filename;
+    const node = item.nodes[0];
+    if (node === undefined) return '';
+    const date = node.startDate !== undefined && node.dueDate !== undefined
+      ? `${node.startDate} → ${node.dueDate}`
+      : node.dueDate ?? node.startDate ?? '';
+    return `${formatNodeTitle(node)} · ${date}${isNodeOverdue(node) ? ' · Overdue' : ''}`;
   }
 </script>
 
 <section class="dashboard" aria-label="Academic progress dashboard">
-  {#each subjectProgress as progress (progress.subject)}
-    <article class="dashboard-card" title={progress.subject}>
-      <header>
-        <h2>{formatSubject(progress.subject)}</h2>
-        <span>{progress.completedTasks}/{progress.totalTasks}</span>
+  {#each subjectSummaries as summary (summary.subject)}
+    <article class="dashboard-card" title={summary.subject}>
+      <header class="card-header">
+        <h2>{formatEntityLabel(summary.subject, 'Nezaradené')}</h2>
+        <span class="completion-count">{summary.completedTasks}/{summary.totalTasks}</span>
       </header>
-      <div class="milestone-track-container">
-        <div class="milestone-track-line">
-          <div
-            class="milestone-progress-fill"
-            style={`width: ${progress.currentDayProgress}%`}
-          ></div>
-          {#each progress.subjectTasks as task (task.id)}
-            <div
-              class={`milestone-dot status-${task.status}`}
-              style={`left: ${task.position}%`}
-              title={`${task.title} (${task.dueDate})`}
-            ></div>
-          {/each}
-        </div>
+
+      <div class="completion-summary">
+        <strong>{summary.completionPercent}%</strong>
+        <span>Task completion</span>
       </div>
-      <p>{progress.percent}% complete</p>
+
+      <div class="mini-timeline" aria-label={`Timeline for ${formatEntityLabel(summary.subject, 'Nezaradené')}`}>
+        <div class="mini-track" aria-hidden="true"></div>
+        {#each summary.overview as item (item.key)}
+          <span
+            class={`mini-item mini-${item.kind} status-${item.status}`}
+            class:color-coded={enableColorCoding}
+            class:overdue={item.overdue}
+            style={`--mini-left: ${item.leftPercent}%; --mini-width: ${item.widthPercent}%`}
+            title={overviewTooltip(item)}
+          >
+            {#if item.kind === 'cluster'}+{item.nodes.length}{/if}
+          </span>
+        {/each}
+        {#if summary.todayPosition !== null}
+          <span
+            class="mini-today"
+            style={`--mini-today: ${summary.todayPosition}%`}
+            title={`Today · ${todayDate()}`}
+          ></span>
+        {/if}
+      </div>
+
+      <dl class="subject-facts">
+        <div>
+          <dt>Next deadline</dt>
+          <dd title={summary.nextDeadline?.path}>
+            {#if summary.nextDeadline === undefined}
+              None scheduled
+            {:else}
+              <strong>{summary.nextDeadline.dueDate}</strong>
+              <span>{formatNodeTitle(summary.nextDeadline)}</span>
+            {/if}
+          </dd>
+        </div>
+        <div>
+          <dt>Overdue</dt>
+          <dd class:has-overdue={summary.overdueCount > 0}>
+            <strong>{summary.overdueCount}</strong>
+            <span>{summary.overdueCount === 1 ? 'task' : 'tasks'}</span>
+          </dd>
+        </div>
+      </dl>
     </article>
   {:else}
-    <p class="empty-state">No roadmap nodes match the active filters.</p>
+    <p class="empty-state">No task-bearing subjects match the active filters.</p>
   {/each}
 </section>
 
 <style>
   .dashboard {
-    display: grid !important;
-    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)) !important;
-    gap: 20px !important;
-    padding: 20px !important;
-    align-items: start !important;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr));
+    align-items: start;
+    gap: var(--size-4-4);
+    padding: var(--size-4-4);
   }
 
   .dashboard-card {
     display: flex;
+    min-width: 0;
     flex-direction: column;
-    gap: 12px;
-    padding: 16px;
+    gap: var(--size-4-3);
+    padding: var(--size-4-4);
     border: var(--border-width) solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-m);
     background: var(--background-secondary);
     color: var(--text-normal);
   }
 
-  header {
+  .card-header,
+  .completion-summary {
     display: flex;
-    align-items: start;
+    align-items: center;
     justify-content: space-between;
     gap: var(--size-4-2);
   }
 
   h2,
+  dl,
+  dt,
+  dd,
   p {
     margin: 0;
   }
 
   h2 {
+    min-width: 0;
     overflow: hidden;
     font-size: var(--font-ui-medium);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  header span,
-  p,
+  .completion-count {
+    flex: 0 0 auto;
+    color: var(--text-muted);
+    font-size: var(--font-ui-small);
+  }
+
+  .completion-summary strong {
+    font-size: var(--font-ui-large);
+  }
+
+  .completion-summary span,
+  dt,
   .empty-state {
     color: var(--text-muted);
     font-size: var(--font-ui-small);
   }
 
-  .milestone-track-container {
-    width: 100%;
+  .mini-timeline {
+    position: relative;
+    height: var(--size-4-6);
+    overflow: hidden;
   }
 
-  .milestone-track-line {
-    position: relative;
-    width: 100%;
-    height: 6px;
-    margin: 16px 0;
-    border-radius: 3px;
+  .mini-track {
+    position: absolute;
+    inset: 50% 0 auto;
+    height: var(--border-width);
     background: var(--background-modifier-border);
   }
 
-  .milestone-progress-fill {
-    position: absolute;
-    top: 0;
-    left: 0;
-    height: 100%;
-    border-radius: 3px;
-    background: var(--interactive-accent);
-    opacity: 0.5;
-  }
-
-  .milestone-dot {
+  .mini-item {
     position: absolute;
     top: 50%;
+    left: var(--mini-left);
     z-index: 2;
-    width: 12px;
-    height: 12px;
+    display: grid;
+    min-width: var(--size-4-2);
+    height: var(--size-4-2);
+    place-items: center;
     transform: translate(-50%, -50%);
-    border: 2px solid var(--background-secondary);
-    border-radius: 50%;
+    border: var(--border-width) solid var(--text-muted);
+    border-radius: var(--radius-l);
+    background: var(--background-primary-alt);
+    color: var(--text-normal);
+    font-size: var(--font-ui-smaller);
   }
 
-  .milestone-dot.status-done {
-    background: #00c875;
+  .mini-segment {
+    width: max(var(--mini-width), var(--size-4-2));
+    transform: translateY(-50%);
   }
 
-  .milestone-dot.status-todo {
-    background: #579bfc;
+  .mini-marker {
+    transform: translate(-50%, -50%) rotate(45deg);
+    border-radius: var(--radius-s);
   }
 
-  .milestone-dot.status-overdue {
-    background: #ff3b30;
+  .mini-cluster {
+    width: var(--size-4-6);
+    height: var(--size-4-6);
+  }
+
+  .mini-item.color-coded.status-todo {
+    background: var(--status-todo);
+    color: var(--text-on-accent);
+  }
+
+  .mini-item.color-coded.status-in-progress {
+    background: var(--status-in-progress);
+    color: var(--text-on-accent);
+  }
+
+  .mini-item.color-coded.status-done {
+    background: var(--status-done);
+    color: var(--text-on-accent);
+  }
+
+  .mini-item.overdue {
+    outline: var(--border-width) solid var(--status-overdue);
+    outline-offset: var(--border-width);
+  }
+
+  .mini-today {
+    position: absolute;
+    inset: 0 auto 0 var(--mini-today);
+    z-index: 3;
+    width: calc(var(--border-width) * 2);
+    transform: translateX(-50%);
+    background: var(--interactive-accent);
+    pointer-events: none;
+  }
+
+  .subject-facts {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(min-content, 1fr);
+    gap: var(--size-4-3);
+  }
+
+  .subject-facts > div {
+    display: grid;
+    align-content: start;
+    gap: var(--size-2-1);
+    min-width: 0;
+    padding: var(--size-4-2);
+    border: var(--border-width) solid var(--border-color);
+    border-radius: var(--radius-s);
+    background: var(--background-primary-alt);
+  }
+
+  dd {
+    display: grid;
+    min-width: 0;
+    gap: var(--size-2-1);
+  }
+
+  dd span {
+    overflow: hidden;
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  dd.has-overdue strong {
+    color: var(--text-error);
   }
 
   .empty-state {
     grid-column: 1 / -1;
     padding: var(--size-4-3);
+  }
+
+  @media (max-width: 40rem) {
+    .dashboard {
+      padding: var(--size-4-2);
+    }
+
+    .subject-facts {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
 </style>

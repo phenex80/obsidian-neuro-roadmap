@@ -19,6 +19,7 @@ import {
 import type { RoadmapNode } from '../src/types';
 import { DependencyEngine } from '../src/core/DependencyEngine';
 import type { RoadmapIndexer } from '../src/core/Indexer';
+import { buildSubjectSummaries } from '../src/core/DashboardMetrics';
 
 const metadataCache = {
   getFirstLinkpathDest: () => null,
@@ -171,6 +172,23 @@ test('automatic dependency propagation never shifts a fixed downstream deadline'
   assert.deepEqual(updates.map((update) => update.node.id), ['soft']);
   assert.equal(updates[0]?.startDate, '2026-09-06');
   assert.equal(updates[0]?.dueDate, '2026-09-07');
+});
+
+test('dashboard completion counts tasks but not roadmap or project anchor nodes', () => {
+  const nodes = [
+    createNode('anchor', { type: 'roadmap', subject: 'ISKB02', source: 'frontmatter' }),
+    createNode('project', { type: 'project', subject: 'ISKB02', source: 'frontmatter' }),
+    createNode('todo', { subject: 'ISKB02', dueDate: '2026-09-10' }),
+    createNode('done', { subject: 'ISKB02', completed: true, status: 'done' }),
+    createNode('late', { subject: 'ISKB02', dueDate: '2026-09-01' }),
+  ];
+  const summary = buildSubjectSummaries(nodes, '2026-09-05')[0];
+
+  assert.equal(summary?.totalTasks, 3);
+  assert.equal(summary?.completedTasks, 1);
+  assert.equal(summary?.completionPercent, 33);
+  assert.equal(summary?.overdueCount, 1);
+  assert.equal(summary?.nextDeadline?.id, 'todo');
 });
 
 function createFile(path: string): TFile {
