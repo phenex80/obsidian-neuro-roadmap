@@ -260,6 +260,8 @@ export class RoadmapParser {
       writeKeys: {
         startDate: startEntry?.key ?? primaryKey(this.options.propertyKeys.startDate, 'start_date'),
         dueDate: dueEntry?.key ?? primaryKey(this.options.propertyKeys.dueDate, 'due_date'),
+        type: typeEntry?.key ?? primaryKey(this.options.propertyKeys.type, 'type'),
+        priority: priorityEntry?.key ?? primaryKey(this.options.propertyKeys.priority, 'priority'),
         status: statusEntry?.key ?? primaryKey(this.options.propertyKeys.status, 'status'),
       },
     };
@@ -301,14 +303,13 @@ export class RoadmapParser {
       const statusEntry = this.readInlineEntry(inlineProperties, 'status');
       const calendarTypeEntry = this.readInlineEntry(inlineProperties, 'calendarType');
       const inlineTypeEntry = this.readInlineEntry(inlineProperties, 'type');
+      const priorityEntry = this.readInlineEntry(inlineProperties, 'priority');
       const startDate = readDate(startEntry?.value);
       const milestoneDate = readDate(milestoneEntry?.value);
       const dueDate = readDate(dueEntry?.value) ?? milestoneDate;
       const priority =
-        mapPriority(
-          this.readInlineValue(inlineProperties, 'priority'),
-          this.options.semanticValues,
-        ) ?? this.options.defaultPriority;
+        mapPriority(priorityEntry?.value, this.options.semanticValues) ??
+        this.options.defaultPriority;
       const explicitStatus = mapStatus(
         statusEntry?.value,
         this.options.semanticValues,
@@ -362,6 +363,12 @@ export class RoadmapParser {
           startDate:
             startEntry?.key ?? preferredInlineKey(this.options.propertyKeys.startDate, 'start'),
           dueDate: dueEntry?.key ?? preferredInlineKey(this.options.propertyKeys.dueDate, 'due'),
+          type:
+            calendarTypeEntry?.key ??
+            inlineTypeEntry?.key ??
+            preferredInlineKey(this.options.propertyKeys.type, 'type'),
+          priority:
+            priorityEntry?.key ?? preferredInlineKey(this.options.propertyKeys.priority, 'priority'),
           status:
             statusEntry?.key ?? preferredInlineKey(this.options.propertyKeys.status, 'status'),
         },
@@ -564,7 +571,9 @@ function primaryKey(keys: readonly string[], fallback: string): string {
 }
 
 function preferredInlineKey(keys: readonly string[], fallback: string): string {
-  return keys.find((key) => normalizeSemanticValue(key) === normalizeSemanticValue(fallback)) ?? fallback;
+  return keys.find((key) => normalizeSemanticValue(key) === normalizeSemanticValue(fallback))
+    ?? keys[0]
+    ?? fallback;
 }
 
 function readDate(value: unknown): string | undefined {

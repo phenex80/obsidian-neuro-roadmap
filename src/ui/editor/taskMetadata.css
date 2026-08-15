@@ -1,0 +1,210 @@
+.markdown-source-view.mod-cm6.is-live-preview .nr-task-metadata-row {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--size-2-2);
+  margin-block: var(--size-2-1) var(--size-4-1);
+  margin-inline-start: calc(var(--checkbox-size) + var(--size-4-3));
+  color: var(--text-muted);
+  font-family: var(--font-interface);
+  font-size: var(--font-ui-smaller);
+  line-height: var(--line-height-tight);
+}
+
+.markdown-source-view.mod-cm6.is-live-preview .nr-task-metadata-chip {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  padding: var(--size-2-1) var(--size-4-1);
+  overflow: hidden;
+  border: var(--border-width) solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary-alt);
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.markdown-source-view.mod-cm6.is-live-preview .nr-task-date-chip {
+  border-color: transparent;
+  background: transparent;
+  padding-inline: 0;
+}
+
+.markdown-source-view.mod-cm6.is-live-preview .nr-task-priority-chip.priority-high {
+  border-color: var(--text-error);
+  color: var(--text-error);
+}
+
+.markdown-source-view.mod-cm6.is-live-preview .nr-task-priority-chip.priority-low {
+  color: var(--text-faint);
+}
+
+.markdown-source-view.mod-cm6.is-live-preview .nr-task-status-chip {
+  border-color: var(--interactive-accent);
+}
+
+.nr-task-metadata-action,
+.nr-task-icon-button {
+  display: inline-grid;
+  min-width: var(--clickable-icon-size);
+  min-height: var(--clickable-icon-size);
+  place-items: center;
+  padding: var(--size-2-1);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-muted);
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.nr-task-metadata-action:hover,
+.nr-task-metadata-action:focus-visible,
+.nr-task-icon-button:hover,
+.nr-task-icon-button:focus-visible {
+  border-color: var(--interactive-accent);
+  background: var(--background-modifier-hover);
+  color: var(--interactive-accent);
+  outline: var(--border-width) solid var(--interactive-accent);
+  outline-offset: var(--border-width);
+}
+
+.nr-task-metadata-action svg,
+.nr-task-icon-button svg {
+  width: var(--icon-size-s);
+  height: var(--icon-size-s);
+}
+
+.nr-task-calendar-action.is-included,
+.nr-task-calendar-button.is-included {
+  color: var(--interactive-accent);
+}
+
+.nr-task-calendar-action.is-manual,
+.nr-task-calendar-button.is-manual {
+  border-color: var(--interactive-accent);
+}
+
+.nr-task-metadata-action:disabled,
+.nr-task-icon-button:disabled {
+  cursor: not-allowed;
+  opacity: var(--icon-opacity);
+}
+
+.markdown-source-view.mod-cm6.is-live-preview .nr-task-properties-action {
+  opacity: var(--icon-opacity);
+  transition: opacity var(--anim-duration-fast) var(--anim-motion-swing);
+}
+
+.markdown-source-view.mod-cm6.is-live-preview .nr-task-metadata-row:hover .nr-task-properties-action,
+.markdown-source-view.mod-cm6.is-live-preview .nr-task-properties-action:focus-visible {
+  opacity: 1;
+}
+
+.markdown-source-view.mod-cm6.is-live-preview .nr-task-metadata-row.is-minimal {
+  justify-content: flex-end;
+  margin-block-start: 0;
+}
+
+.nr-task-properties-popover {
+  position: fixed;
+  z-index: var(--layer-popover);
+  width: clamp(18rem, 32vw, 26rem);
+  max-width: calc(100vw - var(--size-4-6));
+  max-height: calc(100vh - var(--size-4-6));
+  box-sizing: border-box;
+  padding: var(--size-4-3);
+  overflow-y: auto;
+  border: var(--border-width) solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  box-shadow: var(--shadow-s);
+  font-family: var(--font-interface);
+  font-size: var(--font-ui-small);
+}
+
+.nr-task-properties-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--size-4-2);
+  margin-block-end: var(--size-4-3);
+}
+
+.nr-task-properties-heading strong {
+  color: var(--text-normal);
+  font-size: var(--font-ui-medium);
+}
+
+.nr-task-properties-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+}
+
+.nr-task-property-field {
+  display: grid;
+  grid-template-columns: minmax(min-content, 1fr) minmax(0, 2fr);
+  align-items: center;
+  gap: var(--size-4-3);
+  margin: 0;
+}
+
+.nr-task-property-label {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.nr-task-property-field select,
+.nr-task-property-field input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border-color: var(--background-modifier-border);
+  background: var(--background-modifier-form-field);
+  color: var(--text-normal);
+}
+
+.nr-task-property-field select:focus-visible,
+.nr-task-property-field input:focus-visible {
+  border-color: var(--interactive-accent);
+  outline-color: var(--interactive-accent);
+}
+
+.nr-task-calendar-field {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--size-2-2);
+  color: var(--text-normal);
+}
+
+.nr-task-calendar-field > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.nr-task-properties-error {
+  margin: var(--size-4-2) 0 0;
+  color: var(--text-error);
+  font-size: var(--font-ui-smaller);
+}
+
+@media (hover: none), (pointer: coarse) {
+  .markdown-source-view.mod-cm6.is-live-preview .nr-task-properties-action {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 40rem) {
+  .nr-task-property-field {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--size-2-1);
+  }
+}

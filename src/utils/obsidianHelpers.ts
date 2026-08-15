@@ -1,6 +1,12 @@
 import type { App, TAbstractFile, TFile } from 'obsidian';
 import type { RoadmapNode } from '../types';
 import { replaceTaskCheckbox } from '../core/MarkdownTask';
+import {
+  replaceInlineTaskProperty,
+  replaceInlineTaskStatus,
+  type EditableTaskProperty,
+} from '../core/InlineTaskProperties';
+import type { NodeStatus } from '../types';
 
 export interface NodeDateUpdate {
   node: RoadmapNode;
@@ -17,6 +23,73 @@ export interface RoadmapCreationKeys {
   readonly priority: string;
   readonly status: string;
   readonly hardDependency: string;
+}
+
+/** Serializes minimal inline-property edits per file and preserves unrelated Markdown. */
+export class InlineTaskPropertyWriter {
+  private readonly queuesByPath = new Map<string, Promise<void>>();
+
+  constructor(private readonly app: App) {}
+
+  update(
+    node: RoadmapNode,
+    field: Exclude<EditableTaskProperty, 'status'>,
+    value: string | null,
+  ): Promise<boolean> {
+    return this.enqueue(node, (line) => replaceInlineTaskProperty(line, node.writeKeys[field], value));
+  }
+
+  updateStatus(node: RoadmapNode, status: NodeStatus, value: string): Promise<boolean> {
+    return this.enqueue(
+      node,
+      (line) => replaceInlineTaskStatus(line, node.writeKeys.status, value, status),
+    );
+  }
+
+  private enqueue(node: RoadmapNode, transformLine: (line: string) => string): Promise<boolean> {
+    const previous = this.queuesByPath.get(node.path) ?? Promise.resolve();
+    let resolveResult: (updated: boolean) => void = () => undefined;
+    let rejectResult: (error: unknown) => void = () => undefined;
+    const result = new Promise<boolean>((resolve, reject) => {
+      resolveResult = resolve;
+      rejectResult = reject;
+    });
+    const operation = previous
+      .catch(() => undefined)
+      .then(async () => {
+        try {
+          resolveResult(await this.apply(node, transformLine));
+        } catch (error) {
+          rejectResult(error);
+        }
+      });
+    this.queuesByPath.set(node.path, operation);
+    void operation.finally(() => {
+      if (this.queuesByPath.get(node.path) === operation) {
+        this.queuesByPath.delete(node.path);
+      }
+    });
+    return result;
+  }
+
+  private async apply(node: RoadmapNode, transformLine: (line: string) => string): Promise<boolean> {
+    if (node.source !== 'inline') return false;
+    const file = getMarkdownFile(this.app, node.path);
+    if (file === null) return false;
+    let updated = false;
+    await this.app.vault.process(file, (source) => {
+      const lines = source.split(/\r?\n/u);
+      const lineIndex = findInlineTaskLine(lines, node);
+      const originalLine = lines[lineIndex];
+      if (lineIndex === -1 || originalLine === undefined) return source;
+      const nextLine = transformLine(originalLine);
+      if (nextLine === originalLine) return source;
+      lines[lineIndex] = nextLine;
+      updated = true;
+      return lines.join('\n');
+    });
+    return updated;
+  }
 }
 
 /** Updates only the date fields belonging to a roadmap node. */

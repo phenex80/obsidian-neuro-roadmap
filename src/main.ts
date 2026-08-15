@@ -1,4 +1,5 @@
 import { App, Modal, Platform, Plugin, PluginSettingTab, Setting, TFile } from 'obsidian';
+import './ui/editor/taskMetadata.css';
 import {
   CALENDAR_VERIFICATION_INTERVALS,
   CANONICAL_PROPERTY_FIELDS,
@@ -27,6 +28,7 @@ import {
   parseCommaSeparatedValues,
 } from './core/SemanticMapping';
 import { RoadmapScheduler } from './core/RoadmapScheduler';
+import { InlineTaskPropertyWriter } from './utils/obsidianHelpers';
 import { compileSourceScope, hasValidSourceScopeRules } from './core/SourceScope';
 import { CalendarIdentityManager } from './core/CalendarIdentity';
 import { CalendarExportService, type CalendarExportResult } from './core/CalendarExportService';
@@ -59,6 +61,8 @@ import {
 } from './core/SettingsMigration';
 import { GlobalItemView, VIEW_TYPE_NEURO_ROADMAP } from './ui/views/GlobalItemView';
 import { registerRoadmapCodeblockProcessor } from './ui/processors/CodeblockProcessor';
+import { calendarCommitmentDate, isCalendarEligible } from './core/CalendarCore';
+import { TaskMetadataEditorIntegration } from './ui/editor/TaskMetadataEditorExtension';
 
 const DEFAULT_SETTINGS: RoadmapSettings = roadmapSettingsSchema.parse({});
 const PROPERTY_LABELS: Readonly<Record<CanonicalPropertyField, string>> = {
@@ -92,6 +96,7 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
   settings: RoadmapSettings = DEFAULT_SETTINGS;
   readonly indexer = new RoadmapIndexer(this.app);
   readonly scheduler = new RoadmapScheduler(this.app, this.indexer);
+  readonly taskPropertyWriter = new InlineTaskPropertyWriter(this.app);
   readonly calendarIdentity = new CalendarIdentityManager(
     this.app,
     () => this.settings.calendarState.itemIdentities,
@@ -141,6 +146,7 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
   private googleCalendars: readonly CalendarDescriptor[] = [];
   private activeGoogleAuthModal: GoogleAuthorizationModal | null = null;
   private activeGoogleLoopback: GoogleLoopbackSession | null = null;
+  private taskMetadataEditor: TaskMetadataEditorIntegration | null = null;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -149,6 +155,7 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     this.scheduler.setCreationPropertyKeys(parserOptions.propertyKeys);
     await this.indexer.initialize();
     this.indexer.registerEvents((eventRef) => this.registerEvent(eventRef));
+    this.registerTaskMetadataEditor();
     let initialIndexEmission = true;
     const unsubscribeGoogleSync = this.indexer.subscribe((nodes) => {
       if (initialIndexEmission) {
@@ -192,6 +199,8 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     this.activeGoogleLoopback?.close();
     this.activeGoogleLoopback = null;
     this.googleSyncController.dispose();
+    this.taskMetadataEditor?.dispose();
+    this.taskMetadataEditor = null;
     this.settingsListeners.clear();
     this.indexer.clear();
   }
@@ -241,6 +250,29 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
   getCalendarOverride(node: RoadmapNode): CalendarItemOverride | undefined {
     const itemId = this.calendarIdentity.findIdentity(node);
     return itemId === undefined ? undefined : this.settings.calendarState.itemOverrides[itemId];
+  }
+
+  isCalendarIncluded(node: RoadmapNode): boolean {
+    return isCalendarEligible(node, {
+      automaticallyInclude: this.settings.calendar.automaticallyInclude,
+      remindersEnabled: this.settings.calendar.remindersEnabled,
+      reminderMinutes: this.settings.calendar.reminderMinutes,
+      override: this.getCalendarOverride(node),
+    });
+  }
+
+  isNodeCalendarAvailable(node: RoadmapNode): boolean {
+    return calendarCommitmentDate(node) !== null;
+  }
+
+  async toggleCalendarOverride(node: RoadmapNode): Promise<void> {
+    const currentOverride = this.getCalendarOverride(node);
+    const nextOverride = currentOverride !== undefined
+      ? null
+      : this.isCalendarIncluded(node)
+        ? 'exclude'
+        : 'include';
+    await this.setCalendarOverride(node, nextOverride);
   }
 
   async setCalendarOverride(
@@ -489,6 +521,31 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
       defaultDurationBuffer: this.settings.defaultDurationBuffer,
       defaultPriority: this.settings.defaultPriority,
     };
+  }
+
+  private registerTaskMetadataEditor(): void {
+    const integration = new TaskMetadataEditorIntegration({
+      getInlineNodes: (path) => this.indexer.getInlineNodesForPath(path),
+      getPropertyKeys: () => compilePropertyKeyMap(this.settings.propertyMappings),
+      getSemanticValues: () => compileSemanticValueMap(this.settings.valueMappings),
+      updateProperty: async (node, field, value) => {
+        const updated = await this.taskPropertyWriter.update(node, field, value);
+        if (!updated) throw new Error('The original Markdown task could not be located.');
+      },
+      updateStatus: async (node, status, persistedValue) => {
+        const updated = await this.taskPropertyWriter.updateStatus(node, status, persistedValue);
+        if (!updated) throw new Error('The original Markdown task could not be located.');
+      },
+      getCalendarOverride: (node) => this.getCalendarOverride(node),
+      isCalendarIncluded: (node) => this.isCalendarIncluded(node),
+      isCalendarAvailable: (node) => this.isNodeCalendarAvailable(node),
+      toggleCalendar: (node) => this.toggleCalendarOverride(node),
+    });
+    this.taskMetadataEditor = integration;
+    this.registerEditorExtension(integration.extension);
+    this.register(this.indexer.subscribe(() => integration.refresh()));
+    this.register(this.subscribeSettings(() => integration.refresh()));
+    this.register(() => integration.dispose());
   }
 
   private async activateRoadmapView(): Promise<void> {

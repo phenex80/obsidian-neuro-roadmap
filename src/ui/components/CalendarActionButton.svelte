@@ -1,5 +1,6 @@
 <script lang="ts">
   import { setIcon } from 'obsidian';
+  import { describeCalendarAction } from '../../core/CalendarAction';
   import type { CalendarItemOverride } from '../../types';
 
   let {
@@ -17,29 +18,12 @@
   } = $props();
 
   let iconElement: HTMLSpanElement;
-  let actionLabel = $derived.by(() => {
-    if (!available) return 'Add a usable date before using Calendar.';
-    if (override === 'exclude') {
-      return 'Excluded from calendar. Click to use automatic inclusion.';
-    }
-    if (override === 'include') {
-      return 'Included manually. Click to use automatic setting.';
-    }
-    return included
-      ? 'Included automatically in calendar. Click to exclude.'
-      : 'Not included by default. Click to add to calendar.';
-  });
-  let iconName = $derived.by(() => {
-    if (!available) return 'calendar-off';
-    if (override === 'exclude') return 'calendar-x';
-    if (override === 'include') return 'calendar-plus';
-    return included ? 'calendar-check' : 'calendar-off';
-  });
+  let presentation = $derived(describeCalendarAction(included, override, available));
 
   $effect(() => {
     if (iconElement !== undefined) {
       iconElement.replaceChildren();
-      setIcon(iconElement, iconName);
+      setIcon(iconElement, presentation.iconName);
     }
   });
 </script>
@@ -50,8 +34,8 @@
   class:included
   class:excluded={!included}
   class:manual={override !== undefined}
-  title={actionLabel}
-  aria-label={`${actionLabel} ${itemLabel}`}
+  title={presentation.actionLabel}
+  aria-label={`${presentation.actionLabel} ${itemLabel}`}
   aria-pressed={included}
   disabled={!available}
   onclick={() => void onToggle()}

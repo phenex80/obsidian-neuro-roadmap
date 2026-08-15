@@ -79,6 +79,20 @@ import {
   compileSourceScope,
   isFrontmatterInSourceScope,
 } from '../src/core/SourceScope';
+import {
+  calendarTypeDisplayLabel,
+  formatCompactTaskDates,
+  projectCompactTaskMetadata,
+  shouldUseCompactTaskPresentation,
+} from '../src/core/TaskMetadata';
+import {
+  findCompactTaskPropertyTokens,
+  findManagedCalendarBlockId,
+  replaceInlineTaskProperty,
+  replaceInlineTaskStatus,
+} from '../src/core/InlineTaskProperties';
+import { InlineTaskPropertyWriter } from '../src/utils/obsidianHelpers';
+import { describeCalendarAction } from '../src/core/CalendarAction';
 
 const GOOGLE_TEST_CLIENT_SECRET = 'desktop-client-secret-value';
 
@@ -1694,6 +1708,206 @@ test('calendar policy v2 migration applies recommended defaults once and preserv
   assert.deepEqual(migrateRoadmapSettingsData(firstMigration), firstMigration);
 });
 
+test('compact task dates collapse equal dates and format ranges and single endpoints', () => {
+  const now = new Date('2026-01-15T12:00:00.000Z');
+  assert.equal(formatCompactTaskDates('2026-08-27', '2026-08-27', 'en-US', now), 'Aug 27');
+  assert.equal(
+    formatCompactTaskDates('2026-08-20', '2026-08-27', 'en-US', now),
+    'Aug 20 → Aug 27',
+  );
+  assert.equal(formatCompactTaskDates(undefined, '2026-08-27', 'en-US', now), 'Due Aug 27');
+  assert.equal(formatCompactTaskDates('2026-08-27', undefined, 'en-US', now), 'Starts Aug 27');
+  assert.equal(
+    formatCompactTaskDates('2027-08-27', '2027-08-27', 'en-US', now),
+    'Aug 27, 2027',
+  );
+});
+
+test('compact metadata uses semantic labels and suppresses neutral or redundant values', () => {
+  const allFields = {
+    startDate: true,
+    dueDate: true,
+    type: true,
+    priority: true,
+    status: true,
+  };
+  const neutral = projectCompactTaskMetadata(
+    createNode('neutral', {
+      calendarType: 'assignment-deadline',
+      startDate: '2026-08-20',
+      dueDate: '2026-08-27',
+      priority: 'medium',
+      status: 'todo',
+    }),
+    allFields,
+    'en-US',
+    new Date('2026-01-15T12:00:00.000Z'),
+  );
+  assert.equal(neutral.dateLabel, 'Aug 20 → Aug 27');
+  assert.equal(neutral.typeLabel, 'Assignment deadline');
+  assert.equal(neutral.priorityLabel, undefined);
+  assert.equal(neutral.statusLabel, undefined);
+  assert.equal(calendarTypeDisplayLabel('regular-task'), 'Task');
+
+  const meaningful = projectCompactTaskMetadata(
+    createNode('meaningful', { priority: 'high', status: 'in-progress' }),
+    allFields,
+    'en-US',
+  );
+  assert.equal(meaningful.priorityLabel, 'High');
+  assert.equal(meaningful.statusLabel, 'In progress');
+  assert.equal(
+    projectCompactTaskMetadata(
+      createNode('low', { priority: 'low' }),
+      allFields,
+      'en-US',
+    ).priorityLabel,
+    'Low',
+  );
+});
+
+test('compact token scoping ignores unknown metadata and ordinary block IDs', () => {
+  const keys = compilePropertyKeyMap(propertyMappingSchema.parse({}));
+  const line = '- [ ] Úloha [start:: 2026-08-20] [foo:: zachovať] [typ:: skúška] ^nr-cal-abc';
+  const tokens = findCompactTaskPropertyTokens(line, keys);
+  assert.deepEqual(tokens.map(({ field, key }) => ({ field, key })), [
+    { field: 'startDate', key: 'start' },
+    { field: 'type', key: 'typ' },
+  ]);
+  assert.equal(tokens.some((token) => token.key === 'foo'), false);
+  assert.equal(findManagedCalendarBlockId(line, 'nr-cal-abc')?.blockId, 'nr-cal-abc');
+  assert.equal(findManagedCalendarBlockId('- [ ] Úloha ^my-note-anchor'), undefined);
+  assert.equal(findManagedCalendarBlockId(line, 'nr-cal-other'), undefined);
+  assert.equal(shouldUseCompactTaskPresentation(true, createNode('inline')), true);
+  assert.equal(shouldUseCompactTaskPresentation(false, createNode('source')), false);
+  assert.equal(
+    shouldUseCompactTaskPresentation(true, createNode('frontmatter', { source: 'frontmatter' })),
+    false,
+  );
+});
+
+test('inline property mutations preserve title, unknown metadata, order, and stable block identity', () => {
+  const source = '- [ ] Žluťoučký kôň: príprava eseje [start:: 2026-08-20] [foo:: zachovať] [type:: exam] ^nr-cal-stable';
+  const changedType = replaceInlineTaskProperty(source, 'type', 'presentation');
+  assert.equal(
+    changedType,
+    '- [ ] Žluťoučký kôň: príprava eseje [start:: 2026-08-20] [foo:: zachovať] [type:: presentation] ^nr-cal-stable',
+  );
+  const changedStart = replaceInlineTaskProperty(changedType, 'start', '2026-08-22');
+  assert.match(changedStart, /Žluťoučký kôň: príprava eseje/u);
+  assert.match(changedStart, /\[foo:: zachovať\]/u);
+  assert.match(changedStart, /\^nr-cal-stable$/u);
+  const withDue = replaceInlineTaskProperty(changedStart, 'due', '2026-08-30');
+  assert.match(withDue, /\[due:: 2026-08-30\] \^nr-cal-stable$/u);
+  const clearedDue = replaceInlineTaskProperty(withDue, 'due', null);
+  assert.doesNotMatch(clearedDue, /\[due::/u);
+  assert.match(clearedDue, /\[foo:: zachovať\]/u);
+  assert.match(clearedDue, /\^nr-cal-stable$/u);
+});
+
+test('status property edits keep the Markdown checkbox authoritative', () => {
+  const open = '- [ ] Úloha ^nr-cal-status';
+  const inProgress = replaceInlineTaskStatus(open, 'status', 'in-progress', 'in-progress');
+  assert.equal(inProgress, '- [ ] Úloha [status:: in-progress] ^nr-cal-status');
+  const done = replaceInlineTaskStatus(inProgress, 'status', 'done', 'done');
+  assert.equal(done, '- [x] Úloha [status:: done] ^nr-cal-status');
+  const todo = replaceInlineTaskStatus('- [x] Úloha ^nr-cal-status', 'status', 'todo', 'todo');
+  assert.equal(todo, open);
+});
+
+test('shared Calendar action presentation preserves all P24 override states', () => {
+  assert.equal(describeCalendarAction(true, undefined, true).iconName, 'calendar-check');
+  assert.equal(describeCalendarAction(true, 'include', true).iconName, 'calendar-plus');
+  assert.equal(describeCalendarAction(false, 'exclude', true).iconName, 'calendar-x');
+  assert.equal(describeCalendarAction(false, undefined, false).iconName, 'calendar-off');
+  assert.match(
+    describeCalendarAction(true, undefined, true).actionLabel,
+    /Included automatically/u,
+  );
+});
+
+test('serialized task property writes apply rapid edits without corrupting Markdown', async () => {
+  const file = { ...createFile('Predmet/Úlohy.md'), extension: 'md' } as TFile;
+  let source = '- [ ] Dlhý český a slovenský názov [start:: 2026-08-20] [unknown:: áno] ^nr-cal-rapid';
+  const app = {
+    vault: {
+      getAbstractFileByPath: () => file,
+      process: async (_file: TFile, transform: (value: string) => string) => {
+        await Promise.resolve();
+        source = transform(source);
+      },
+    },
+  } as unknown as App;
+  const node = createNode('rapid', {
+    path: file.path,
+    sourceLine: 0,
+    blockId: 'nr-cal-rapid',
+  });
+  const writer = new InlineTaskPropertyWriter(app);
+  await Promise.all([
+    writer.update(node, 'startDate', '2026-08-22'),
+    writer.update(node, 'dueDate', '2026-08-30'),
+    writer.update(node, 'type', 'exam'),
+    writer.update(node, 'priority', 'high'),
+  ]);
+
+  assert.match(source, /^- \[ \] Dlhý český a slovenský názov/u);
+  assert.match(source, /\[start:: 2026-08-22\]/u);
+  assert.match(source, /\[due:: 2026-08-30\]/u);
+  assert.match(source, /\[type:: exam\]/u);
+  assert.match(source, /\[priority:: high\]/u);
+  assert.match(source, /\[unknown:: áno\]/u);
+  assert.match(source, /\^nr-cal-rapid$/u);
+});
+
+test('inline property editor reuses configured and existing mapped write keys', () => {
+  const mappings = propertyMappingSchema.parse({
+    startDate: 'začiatok',
+    dueDate: 'termín',
+    type: 'typ',
+    priority: 'priorita',
+    status: 'stav',
+  });
+  const parser = new RoadmapParser(metadataCache, {
+    ...createDefaultParserOptions(),
+    propertyKeys: compilePropertyKeyMap(mappings),
+  });
+  const node = parser.parseFile(
+    createFile('Predmet/Úlohy.md'),
+    createCache({ predmet: 'ISKB02' }, [{ line: 0, task: ' ' }]),
+    '- [ ] Skúška [typ:: exam] [priorita:: high] ^nr-cal-mapped',
+  )[0];
+  assert.deepEqual(node?.writeKeys, {
+    startDate: 'začiatok',
+    dueDate: 'termín',
+    type: 'typ',
+    priority: 'priorita',
+    status: 'stav',
+  });
+});
+
+test('task property edits retain calendar identity and re-evaluate P24 type policy', () => {
+  const keys = compilePropertyKeyMap(propertyMappingSchema.parse({}));
+  const values = compileSemanticValueMap(semanticValueMappingSchema.parse({}));
+  const parser = new RoadmapParser(metadataCache, {
+    ...createDefaultParserOptions(),
+    propertyKeys: keys,
+    semanticValues: values,
+  });
+  const file = createFile('Predmet/Úlohy.md');
+  const cache = createCache({ predmet: 'ISKB02' }, [{ line: 0, task: ' ' }]);
+  const regularSource = '- [ ] Odovzdať prácu [due:: 2026-08-27] [type:: task] ^nr-cal-policy';
+  const examSource = replaceInlineTaskProperty(regularSource, 'type', 'exam');
+  const regular = parser.parseFile(file, cache, regularSource)[0];
+  const exam = parser.parseFile(file, cache, examSource)[0];
+  assert.equal(regular?.calendarType, 'regular-task');
+  assert.equal(exam?.calendarType, 'exam');
+  assert.equal(calendarItemLocator(regular ?? createNode('missing')), 'inline:Predmet/Úlohy.md#^nr-cal-policy');
+  assert.equal(calendarItemLocator(exam ?? createNode('missing')), 'inline:Predmet/Úlohy.md#^nr-cal-policy');
+  assert.equal(isCalendarEligible(regular ?? createNode('missing'), createCalendarOptions()), false);
+  assert.equal(isCalendarEligible(exam ?? createNode('missing'), createCalendarOptions()), true);
+});
+
 function createRulesParser(
   rules: readonly { readonly property: string; readonly acceptedValues: string }[],
 ): RoadmapParser {
@@ -1777,7 +1991,13 @@ function createNode(
     hardDependency: false,
     source: 'inline',
     completed: false,
-    writeKeys: { startDate: 'start', dueDate: 'due', status: 'status' },
+    writeKeys: {
+      startDate: 'start',
+      dueDate: 'due',
+      type: 'type',
+      priority: 'priority',
+      status: 'status',
+    },
     ...overrides,
   };
 }

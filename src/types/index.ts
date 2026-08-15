@@ -276,6 +276,8 @@ export type RoadmapSettings = z.infer<typeof roadmapSettingsSchema>;
 export interface RoadmapNodeWriteKeys {
   startDate: string;
   dueDate: string;
+  type: string;
+  priority: string;
   status: string;
 }
 

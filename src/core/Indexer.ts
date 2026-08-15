@@ -91,6 +91,14 @@ export class RoadmapIndexer {
     return node === undefined ? undefined : cloneNode(node);
   }
 
+  /** Returns indexed inline tasks for one editor without scanning the rest of the vault. */
+  getInlineNodesForPath(path: string): readonly RoadmapNode[] {
+    return Array.from(this.nodeIdsByPath.get(path) ?? [])
+      .map((nodeId) => this.nodesById.get(nodeId))
+      .filter((node): node is RoadmapNode => node?.source === 'inline')
+      .map(cloneNode);
+  }
+
   getDependencies(nodeId: string): readonly RoadmapNode[] {
     return Array.from(this.dependenciesByNodeId.get(nodeId) ?? [])
       .map((dependencyId) => this.nodesById.get(dependencyId))

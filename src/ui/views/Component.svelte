@@ -9,7 +9,6 @@
   } from '../../types';
   import type { RoadmapIndexer } from '../../core/Indexer';
   import type { RoadmapScheduler } from '../../core/RoadmapScheduler';
-  import { calendarCommitmentDate, isCalendarEligible } from '../../core/CalendarCore';
   import type { CalendarExportResult } from '../../core/CalendarExportService';
   import type {
     CalendarSyncRuntimeStatus,
@@ -29,7 +28,9 @@
     initialSettings,
     subscribeSettings,
     getCalendarOverride,
-    setCalendarOverride,
+    isCalendarIncluded,
+    isCalendarAvailable,
+    toggleCalendarOverride: requestToggleCalendarOverride,
     exportCalendar,
     calendarSyncProviderLabel,
     isCalendarSyncAvailable,
@@ -43,7 +44,9 @@
     initialSettings: Readonly<RoadmapSettings>;
     subscribeSettings: (listener: (settings: Readonly<RoadmapSettings>) => void) => () => void;
     getCalendarOverride: (node: RoadmapNode) => CalendarItemOverride | undefined;
-    setCalendarOverride: (node: RoadmapNode, override: CalendarItemOverride | null) => Promise<void>;
+    isCalendarIncluded: (node: RoadmapNode) => boolean;
+    isCalendarAvailable: (node: RoadmapNode) => boolean;
+    toggleCalendarOverride: (node: RoadmapNode) => Promise<void>;
     exportCalendar: (nodes: readonly RoadmapNode[]) => Promise<CalendarExportResult>;
     calendarSyncProviderLabel: string;
     isCalendarSyncAvailable: () => boolean;
@@ -140,26 +143,15 @@
   }
 
   function calendarIncluded(node: RoadmapNode): boolean {
-    return isCalendarEligible(node, {
-      automaticallyInclude: settings.calendar.automaticallyInclude,
-      remindersEnabled: settings.calendar.remindersEnabled,
-      reminderMinutes: settings.calendar.reminderMinutes,
-      override: calendarOverride(node),
-    });
+    return isCalendarIncluded(node);
   }
 
   function calendarAvailable(node: RoadmapNode): boolean {
-    return calendarCommitmentDate(node) !== null;
+    return isCalendarAvailable(node);
   }
 
   async function toggleCalendarOverride(node: RoadmapNode): Promise<void> {
-    const currentOverride = calendarOverride(node);
-    const nextOverride = currentOverride !== undefined
-      ? null
-      : calendarIncluded(node)
-        ? 'exclude'
-        : 'include';
-    await setCalendarOverride(node, nextOverride);
+    await requestToggleCalendarOverride(node);
   }
 
   async function downloadCalendar(scope: 'current' | 'all'): Promise<void> {

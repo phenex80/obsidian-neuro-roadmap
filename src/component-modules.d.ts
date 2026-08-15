@@ -4,3 +4,8 @@ declare module '*.svelte' {
   const component: Component;
   export default component;
 }
+
+declare module '*.css' {
+  const stylesheet: string;
+  export default stylesheet;
+}

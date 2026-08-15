@@ -1,15 +1,27 @@
 import esbuild from 'esbuild';
 import { compile } from 'svelte/compiler';
 import { readFile, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 
 const production = process.argv[2] === 'production';
 const cssByFile = new Map();
+const staticCssByFile = new Map();
 
 const sveltePlugin = {
   name: 'svelte',
   setup(build) {
     build.onStart(() => {
       cssByFile.clear();
+      staticCssByFile.clear();
+    });
+    build.onResolve({ filter: /\.css$/ }, (args) => ({
+      path: resolve(args.resolveDir, args.path),
+      namespace: 'neuro-roadmap-css',
+    }));
+    build.onLoad({ filter: /.*/, namespace: 'neuro-roadmap-css' }, async (args) => {
+      const source = await readFile(args.path, 'utf8');
+      staticCssByFile.set(args.path, source);
+      return { contents: '', loader: 'js', watchFiles: [args.path] };
     });
     build.onLoad({ filter: /\.svelte$/ }, async (args) => {
       const source = await readFile(args.path, 'utf8');
@@ -39,7 +51,7 @@ const sveltePlugin = {
         return;
       }
 
-      const styles = Array.from(cssByFile.entries())
+      const styles = [...staticCssByFile.entries(), ...cssByFile.entries()]
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([, css]) => css)
         .join('\n');
@@ -51,7 +63,7 @@ const sveltePlugin = {
 const context = await esbuild.context({
   entryPoints: ['src/main.ts'],
   bundle: true,
-  external: ['obsidian', 'http', 'node:http'],
+  external: ['obsidian', 'http', 'node:http', '@codemirror/state', '@codemirror/view'],
   format: 'cjs',
   target: 'es2022',
   minify: production,
