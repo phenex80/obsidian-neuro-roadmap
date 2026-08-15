@@ -13,8 +13,24 @@ const obsidianTestStub = {
       namespace: 'obsidian-test-stub',
     }));
     build.onLoad({ filter: /.*/, namespace: 'obsidian-test-stub' }, () => ({
-      contents: 'export const Platform = { isDesktopApp: true, isMobile: false };',
+      contents: `
+        import { StateField } from '@codemirror/state';
+        export const Platform = { isDesktopApp: true, isMobile: false };
+        export const editorInfoField = StateField.define({
+          create: () => ({ file: { path: 'note.md' } }),
+          update: (value) => value,
+        });
+        export const editorLivePreviewField = StateField.define({
+          create: () => true,
+          update: (value) => value,
+        });
+        export const getLanguage = () => 'en';
+        export const setIcon = () => {};
+        export class Modal {}
+        export class Setting {}
+      `,
       loader: 'js',
+      resolveDir: resolve('.'),
     }));
   },
 };

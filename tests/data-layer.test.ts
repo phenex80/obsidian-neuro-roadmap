@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
+import { EditorState } from '@codemirror/state';
+import { EditorView } from '@codemirror/view';
 import { createServer } from 'node:http';
 import test from 'node:test';
+import { editorInfoField, editorLivePreviewField } from 'obsidian';
 import type { App, CachedMetadata, MetadataCache, TFile } from 'obsidian';
 import { RoadmapParser, createDefaultParserOptions, isCompletedTaskMarker } from '../src/core/Parser';
 import {
@@ -93,6 +96,7 @@ import {
 } from '../src/core/InlineTaskProperties';
 import { InlineTaskPropertyWriter } from '../src/utils/obsidianHelpers';
 import { describeCalendarAction } from '../src/core/CalendarAction';
+import { TaskMetadataEditorIntegration } from '../src/ui/editor/TaskMetadataEditorExtension';
 
 const GOOGLE_TEST_CLIENT_SECRET = 'desktop-client-secret-value';
 
@@ -1824,6 +1828,34 @@ test('shared Calendar action presentation preserves all P24 override states', ()
     describeCalendarAction(true, undefined, true).actionLabel,
     /Included automatically/u,
   );
+});
+
+test('task metadata block decorations are provided directly from editor state', () => {
+  const settings = roadmapSettingsSchema.parse({});
+  const node = createNode('note.md#task-0', {
+    path: 'note.md',
+    title: 'Task',
+    sourceLine: 0,
+  });
+  const integration = new TaskMetadataEditorIntegration({
+    getInlineNodes: () => [node],
+    getPropertyKeys: () => compilePropertyKeyMap(settings.propertyMappings),
+    getSemanticValues: () => compileSemanticValueMap(settings.valueMappings),
+    updateProperty: async () => {},
+    updateStatus: async () => {},
+    getCalendarOverride: () => undefined,
+    isCalendarIncluded: () => false,
+    isCalendarAvailable: () => false,
+    toggleCalendar: async () => {},
+  });
+  const state = EditorState.create({
+    doc: '- [ ] Task',
+    extensions: [editorInfoField, editorLivePreviewField, integration.extension],
+  });
+  const decorationProviders = state.facet(EditorView.decorations);
+
+  assert.equal(decorationProviders.length, 1);
+  assert.notEqual(typeof decorationProviders[0], 'function');
 });
 
 test('serialized task property writes apply rapid edits without corrupting Markdown', async () => {

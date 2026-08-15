@@ -1,11 +1,17 @@
-import { Prec, StateEffect, type Extension, type Range } from '@codemirror/state';
+import {
+  Prec,
+  StateEffect,
+  StateField,
+  type EditorState,
+  type Extension,
+  type Range,
+} from '@codemirror/state';
 import {
   Decoration,
   EditorView,
   ViewPlugin,
   WidgetType,
   type DecorationSet,
-  type ViewUpdate,
 } from '@codemirror/view';
 import {
   editorInfoField,
@@ -73,33 +79,40 @@ export class TaskMetadataEditorIntegration {
 
   constructor(private readonly options: TaskMetadataEditorOptions) {
     const owner = this;
-    const plugin = ViewPlugin.fromClass(
+    const decorations = StateField.define<DecorationSet>({
+      create(state) {
+        return owner.buildDecorations(state);
+      },
+      update(value, transaction) {
+        const refreshed = transaction.effects.some((effect) => effect.is(refreshTaskMetadata));
+        const fileChanged = editorPath(transaction.startState) !== editorPath(transaction.state);
+        const livePreviewChanged = livePreviewEnabled(transaction.startState) !==
+          livePreviewEnabled(transaction.state);
+        if (
+          transaction.docChanged ||
+          transaction.selection !== undefined ||
+          refreshed ||
+          fileChanged ||
+          livePreviewChanged
+        ) {
+          return owner.buildDecorations(transaction.state);
+        }
+        return value;
+      },
+      provide: (field) => EditorView.decorations.from(field),
+    });
+    const viewTracker = ViewPlugin.fromClass(
       class {
-        decorations: DecorationSet;
-
         constructor(readonly view: EditorView) {
           owner.views.add(view);
-          this.decorations = owner.buildDecorations(view);
-        }
-
-        update(update: ViewUpdate): void {
-          const refreshed = update.transactions.some((transaction) =>
-            transaction.effects.some((effect) => effect.is(refreshTaskMetadata)),
-          );
-          const fileChanged = editorPath(update.startState) !== editorPath(update.state);
-          const livePreviewChanged = livePreviewEnabled(update.startState) !== livePreviewEnabled(update.state);
-          if (update.docChanged || update.selectionSet || refreshed || fileChanged || livePreviewChanged) {
-            this.decorations = owner.buildDecorations(update.view);
-          }
         }
 
         destroy(): void {
           owner.views.delete(this.view);
         }
       },
-      { decorations: (value) => value.decorations },
     );
-    this.extension = Prec.highest(plugin);
+    this.extension = Prec.highest([decorations, viewTracker]);
   }
 
   refresh(): void {
@@ -142,9 +155,9 @@ export class TaskMetadataEditorIntegration {
     };
   }
 
-  private buildDecorations(view: EditorView): DecorationSet {
-    if (!livePreviewEnabled(view.state)) return Decoration.none;
-    const path = editorPath(view.state);
+  private buildDecorations(state: EditorState): DecorationSet {
+    if (!livePreviewEnabled(state)) return Decoration.none;
+    const path = editorPath(state);
     if (path === undefined) return Decoration.none;
     const nodes = this.options.getInlineNodes(path);
     if (nodes.length === 0) return Decoration.none;
@@ -154,8 +167,8 @@ export class TaskMetadataEditorIntegration {
     const ranges: Range<Decoration>[] = [];
     for (const node of nodes) {
       if (!shouldUseCompactTaskPresentation(true, node)) continue;
-      if (node.sourceLine === undefined || node.sourceLine >= view.state.doc.lines) continue;
-      const line = view.state.doc.line(node.sourceLine + 1);
+      if (node.sourceLine === undefined || node.sourceLine >= state.doc.lines) continue;
+      const line = state.doc.line(node.sourceLine + 1);
       if (!/^\s*[-*+]\s+\[[^\]]\]/u.test(line.text)) continue;
       const tokens = findCompactTaskPropertyTokens(line.text, propertyKeys);
       const projectedTokens = tokens.filter((token) =>
@@ -167,7 +180,7 @@ export class TaskMetadataEditorIntegration {
       for (const token of projectedTokens) {
         const from = line.from + token.from;
         const to = line.from + token.to;
-        if (!selectionIntersects(view, from, to)) {
+        if (!selectionIntersects(state, from, to)) {
           ranges.push(Decoration.replace({}).range(from, to));
         }
       }
@@ -176,7 +189,7 @@ export class TaskMetadataEditorIntegration {
       if (blockId !== undefined) {
         const from = line.from + blockId.from;
         const to = line.from + blockId.to;
-        if (!selectionIntersects(view, from, to)) {
+        if (!selectionIntersects(state, from, to)) {
           ranges.push(Decoration.replace({}).range(from, to));
         }
       }
@@ -321,16 +334,16 @@ function fieldPresence(tokens: readonly InlineTaskPropertyToken[]): CompactTaskF
   };
 }
 
-function selectionIntersects(view: EditorView, from: number, to: number): boolean {
-  return view.state.selection.ranges.some((range) => range.from <= to && range.to >= from);
+function selectionIntersects(state: EditorState, from: number, to: number): boolean {
+  return state.selection.ranges.some((range) => range.from <= to && range.to >= from);
 }
 
-function editorPath(state: EditorView['state']): string | undefined {
+function editorPath(state: EditorState): string | undefined {
   const info = state.field(editorInfoField, false) as MarkdownFileInfo | undefined;
   return info?.file?.path;
 }
 
-function livePreviewEnabled(state: EditorView['state']): boolean {
+function livePreviewEnabled(state: EditorState): boolean {
   return (state.field(editorLivePreviewField, false) as boolean | undefined) ?? false;
 }
 
