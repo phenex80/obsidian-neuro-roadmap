@@ -154,24 +154,31 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     const parserOptions = this.getParserOptions();
     this.indexer.setParserOptions(parserOptions);
     this.scheduler.setCreationPropertyKeys(parserOptions.propertyKeys);
-    await this.indexer.initialize();
     this.indexer.registerEvents((eventRef) => this.registerEvent(eventRef));
+    this.registerView(VIEW_TYPE_NEURO_ROADMAP, (leaf) => new GlobalItemView(leaf, this));
+    this.app.workspace.onLayoutReady(() => {
+      void this.indexer.completeInitialIndex();
+    });
+    registerRoadmapCodeblockProcessor(this, this.app, this.indexer);
     this.registerTaskMetadataEditor();
-    let initialIndexEmission = true;
-    const unsubscribeGoogleSync = this.indexer.subscribe((nodes) => {
-      if (initialIndexEmission) {
-        initialIndexEmission = false;
+    let receivedReadyIndex = false;
+    const unsubscribeGoogleSync = this.indexer.subscribe((snapshot) => {
+      if (!snapshot.ready) {
+        return;
+      }
+      if (!receivedReadyIndex) {
+        receivedReadyIndex = true;
+        if (this.shouldAutoSyncGoogle()) {
+          void this.googleSyncController.syncStartup(snapshot.nodes).catch(() => undefined);
+        }
         return;
       }
       if (this.shouldAutoSyncGoogle()) {
-        this.googleSyncController.schedule(nodes);
+        this.googleSyncController.schedule(snapshot.nodes);
       }
     });
     this.register(unsubscribeGoogleSync);
     this.configureGoogleVerification();
-    if (this.shouldAutoSyncGoogle()) {
-      void this.googleSyncController.syncStartup(this.indexer.getNodes()).catch(() => undefined);
-    }
     this.registerEvent(
       this.app.vault.on('rename', (file, oldPath) => {
         if (file instanceof TFile && file.extension.toLocaleLowerCase() === 'md') {
@@ -179,8 +186,6 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
         }
       }),
     );
-    this.registerView(VIEW_TYPE_NEURO_ROADMAP, (leaf) => new GlobalItemView(leaf, this));
-    registerRoadmapCodeblockProcessor(this, this.app, this.indexer);
     this.addRibbonIcon('git-branch', 'Open Neuro Roadmap', () => {
       void this.activateRoadmapView();
     });
@@ -192,6 +197,7 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
       },
     });
     this.addSettingTab(new NeuroAdaptiveRoadmapSettingTab(this.app, this));
+    void this.indexer.initialize();
   }
 
   onunload(): void {

@@ -58,6 +58,7 @@
     subscribeCalendarSyncStatus: (listener: (status: CalendarSyncRuntimeStatus) => void) => () => void;
   } = $props();
   let nodes = $state<readonly RoadmapNode[]>([]);
+  let indexReady = $state(false);
   let settings = $state<RoadmapSettings>(roadmapSettingsSchema.parse({}));
   let enableColorCoding = $derived(settings.enableColorCoding);
   let semester = $state('all');
@@ -102,8 +103,9 @@
   onMount(() => {
     settings = cloneSettings(initialSettings);
     scale = initialSettings.ganttScale;
-    const unsubscribeIndexer = indexer.subscribe((updatedNodes) => {
-      nodes = updatedNodes;
+    const unsubscribeIndexer = indexer.subscribe((snapshot) => {
+      nodes = snapshot.nodes;
+      indexReady = snapshot.ready;
       circularDependencyCycles = indexer.getCircularDependencyCycles();
     });
     const unsubscribeSettings = subscribeSettings((updatedSettings) => {
@@ -219,6 +221,7 @@
 
 <main
   class="roadmap-workspace"
+  aria-busy={!indexReady}
   style={`--status-todo: ${settings.colors.todo}; --status-in-progress: ${settings.colors.inProgress}; --status-done: ${settings.colors.done}; --status-overdue: ${settings.colors.overdue}; --priority-high: ${settings.colors.priorityHigh}; --priority-medium: ${settings.colors.priorityMedium}; --priority-low: ${settings.colors.priorityLow}`}
 >
   <header class="app-header">
@@ -325,59 +328,65 @@
 
   </header>
 
-  <div class="notice-slot">
-    <CircularDependencyAlert cycles={circularDependencyCycles} />
-  </div>
-
-  <div class="roadmap-layout">
-    <div class="main-panel">
-      {#if viewMode === 'dashboard'}
-        <DashboardView nodes={filteredNodes} {enableColorCoding} />
-      {:else if viewMode === 'gantt'}
-        <GanttCanvas
-          nodes={filteredNodes}
-          {scale}
-          {enableColorCoding}
-          onReschedule={(node, startDate, dueDate) => scheduler.rescheduleNode(node, startDate, dueDate)}
-          onSchedule={(node, startDate, dueDate) => scheduler.scheduleUnscheduledNode(node, startDate, dueDate)}
-          onCreate={(startDate, dueDate) => scheduler.createNode(startDate, dueDate)}
-          onEdit={openScratchpad}
-          onToggleComplete={(node, completed) => scheduler.setTaskCompletion(node, completed).then(() => undefined)}
-          onOpenSource={(node) => scheduler.openSource(node)}
-          getCalendarOverride={calendarOverride}
-          isCalendarIncluded={calendarIncluded}
-          isCalendarAvailable={calendarAvailable}
-          onToggleCalendar={toggleCalendarOverride}
-        />
-      {:else}
-        <HorizonBoard
-          nodes={filteredNodes}
-          {enableColorCoding}
-          nextDays={settings.horizonNextDays}
-          criticalDays={settings.horizonCriticalDays}
-          overduePreviewLimit={settings.horizonOverduePreviewLimit}
-          onEdit={openScratchpad}
-          onToggleComplete={(node, completed) => scheduler.setTaskCompletion(node, completed).then(() => undefined)}
-          onOpenSource={(node) => scheduler.openSource(node)}
-          getCalendarOverride={calendarOverride}
-          isCalendarIncluded={calendarIncluded}
-          isCalendarAvailable={calendarAvailable}
-          onToggleCalendar={toggleCalendarOverride}
-        />
-      {/if}
+  {#if !indexReady}
+    <section class="roadmap-loading" role="status" aria-live="polite">
+      <span>Indexing roadmap from Obsidian metadata…</span>
+    </section>
+  {:else}
+    <div class="notice-slot">
+      <CircularDependencyAlert cycles={circularDependencyCycles} />
     </div>
-    <UnscheduledDrawer
-      nodes={filteredNodes}
-      {enableColorCoding}
-      onEdit={openScratchpad}
-      onToggleComplete={(node, completed) => scheduler.setTaskCompletion(node, completed).then(() => undefined)}
-      onOpenSource={(node) => scheduler.openSource(node)}
-      getCalendarOverride={calendarOverride}
-      isCalendarIncluded={calendarIncluded}
-      isCalendarAvailable={calendarAvailable}
-      onToggleCalendar={toggleCalendarOverride}
-    />
-  </div>
+
+    <div class="roadmap-layout">
+      <div class="main-panel">
+        {#if viewMode === 'dashboard'}
+          <DashboardView nodes={filteredNodes} {enableColorCoding} />
+        {:else if viewMode === 'gantt'}
+          <GanttCanvas
+            nodes={filteredNodes}
+            {scale}
+            {enableColorCoding}
+            onReschedule={(node, startDate, dueDate) => scheduler.rescheduleNode(node, startDate, dueDate)}
+            onSchedule={(node, startDate, dueDate) => scheduler.scheduleUnscheduledNode(node, startDate, dueDate)}
+            onCreate={(startDate, dueDate) => scheduler.createNode(startDate, dueDate)}
+            onEdit={openScratchpad}
+            onToggleComplete={(node, completed) => scheduler.setTaskCompletion(node, completed).then(() => undefined)}
+            onOpenSource={(node) => scheduler.openSource(node)}
+            getCalendarOverride={calendarOverride}
+            isCalendarIncluded={calendarIncluded}
+            isCalendarAvailable={calendarAvailable}
+            onToggleCalendar={toggleCalendarOverride}
+          />
+        {:else}
+          <HorizonBoard
+            nodes={filteredNodes}
+            {enableColorCoding}
+            nextDays={settings.horizonNextDays}
+            criticalDays={settings.horizonCriticalDays}
+            overduePreviewLimit={settings.horizonOverduePreviewLimit}
+            onEdit={openScratchpad}
+            onToggleComplete={(node, completed) => scheduler.setTaskCompletion(node, completed).then(() => undefined)}
+            onOpenSource={(node) => scheduler.openSource(node)}
+            getCalendarOverride={calendarOverride}
+            isCalendarIncluded={calendarIncluded}
+            isCalendarAvailable={calendarAvailable}
+            onToggleCalendar={toggleCalendarOverride}
+          />
+        {/if}
+      </div>
+      <UnscheduledDrawer
+        nodes={filteredNodes}
+        {enableColorCoding}
+        onEdit={openScratchpad}
+        onToggleComplete={(node, completed) => scheduler.setTaskCompletion(node, completed).then(() => undefined)}
+        onOpenSource={(node) => scheduler.openSource(node)}
+        getCalendarOverride={calendarOverride}
+        isCalendarIncluded={calendarIncluded}
+        isCalendarAvailable={calendarAvailable}
+        onToggleCalendar={toggleCalendarOverride}
+      />
+    </div>
+  {/if}
 </main>
 
 {#if scratchpadNode !== null}
@@ -397,6 +406,19 @@
     min-height: 100%;
     background: var(--background-primary);
     color: var(--text-normal);
+  }
+
+  .roadmap-loading {
+    display: grid;
+    place-items: center;
+    min-height: clamp(10rem, 30vh, 22rem);
+    margin: 0 var(--size-4-3) var(--size-4-3);
+    padding: var(--size-4-4);
+    border: var(--border-width) solid var(--border-color);
+    border-radius: var(--radius-m);
+    background: var(--background-secondary);
+    color: var(--text-muted);
+    font-size: var(--font-ui-small);
   }
 
   .app-header {

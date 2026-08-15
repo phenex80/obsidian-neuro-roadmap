@@ -2,7 +2,12 @@ import type { App, CachedMetadata, EventRef, TAbstractFile, TFile } from 'obsidi
 import { RoadmapParser, type RoadmapParserOptions } from './Parser';
 import type { RoadmapNode } from '../types';
 
-export type RoadmapIndexListener = (nodes: readonly RoadmapNode[]) => void;
+export interface RoadmapIndexSnapshot {
+  readonly nodes: readonly RoadmapNode[];
+  readonly ready: boolean;
+}
+
+export type RoadmapIndexListener = (snapshot: RoadmapIndexSnapshot) => void;
 
 /**
  * Maintains an in-memory roadmap graph from Obsidian's metadata cache.
@@ -16,14 +21,25 @@ export class RoadmapIndexer {
   private readonly dependentIdsByNodeId = new Map<string, Set<string>>();
   private readonly listeners = new Set<RoadmapIndexListener>();
   private readonly revisionsByPath = new Map<string, number>();
+  private ready = false;
+  private resolveReady: (() => void) | null = null;
+  private readonly readyPromise = new Promise<void>((resolve) => {
+    this.resolveReady = resolve;
+  });
+  private initializationPromise: Promise<void> | null = null;
+  private definitiveRebuildPromise: Promise<void> | null = null;
+  private rebuildQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly app: App) {
     this.parser = new RoadmapParser(app.metadataCache);
   }
 
-  /** Performs the one-time cache-backed initial index before a view consumes the graph. */
-  async initialize(): Promise<void> {
-    await this.rebuild();
+  /** Starts initial indexing and resolves once a definitive cache-backed snapshot is ready. */
+  initialize(): Promise<void> {
+    this.initializationPromise ??= (
+      this.definitiveRebuildPromise ?? this.enqueueRebuild(false)
+    ).then(() => this.readyPromise);
+    return this.initializationPromise;
   }
 
   /** Applies YAML mapping settings to all subsequent parser operations. */
@@ -32,12 +48,22 @@ export class RoadmapIndexer {
   }
 
   /** Rebuilds the graph after parser configuration changes. */
-  async rebuild(): Promise<void> {
+  rebuild(): Promise<void> {
+    return this.enqueueRebuild(false);
+  }
+
+  private async performRebuild(): Promise<void> {
     this.resetGraph();
     const files = this.app.vault.getMarkdownFiles();
     this.parser.setKnownMarkdownPaths(files.map((file) => file.path));
     await Promise.all(files.map(async (file) => this.reindexFile(file, false)));
-    this.emitChange();
+  }
+
+  /** Finalizes an unresolved initial scan once Obsidian's restored workspace is ready. */
+  completeInitialIndex(): Promise<void> {
+    if (this.ready) return Promise.resolve();
+    this.definitiveRebuildPromise ??= this.enqueueRebuild(true);
+    return this.definitiveRebuildPromise;
   }
 
   /** Returns cached YAML key usage without reading Markdown file bodies. */
@@ -71,6 +97,13 @@ export class RoadmapIndexer {
       }),
     );
     registerEvent(
+      this.app.metadataCache.on('resolved', () => {
+        if (!this.ready) {
+          void this.completeInitialIndex();
+        }
+      }),
+    );
+    registerEvent(
       this.app.vault.on('delete', (file) => {
         this.handleVaultDelete(file);
       }),
@@ -84,6 +117,13 @@ export class RoadmapIndexer {
 
   getNodes(): readonly RoadmapNode[] {
     return Array.from(this.nodesById.values(), cloneNode);
+  }
+
+  getSnapshot(): RoadmapIndexSnapshot {
+    return {
+      nodes: this.getNodes(),
+      ready: this.ready,
+    };
   }
 
   getNode(nodeId: string): RoadmapNode | undefined {
@@ -157,7 +197,7 @@ export class RoadmapIndexer {
 
   subscribe(listener: RoadmapIndexListener): () => void {
     this.listeners.add(listener);
-    listener(this.getNodes());
+    listener(this.getSnapshot());
     return () => this.listeners.delete(listener);
   }
 
@@ -299,10 +339,27 @@ export class RoadmapIndexer {
   }
 
   private emitChange(): void {
-    const nodes = this.getNodes();
+    const snapshot = this.getSnapshot();
     for (const listener of this.listeners) {
-      listener(nodes);
+      listener(snapshot);
     }
+  }
+
+  private enqueueRebuild(metadataResolved: boolean): Promise<void> {
+    const rebuild = this.rebuildQueue.then(async () => {
+      await this.performRebuild();
+      if (metadataResolved) this.markReady();
+      this.emitChange();
+    });
+    this.rebuildQueue = rebuild.catch(() => undefined);
+    return rebuild;
+  }
+
+  private markReady(): void {
+    if (this.ready) return;
+    this.ready = true;
+    this.resolveReady?.();
+    this.resolveReady = null;
   }
 }
 

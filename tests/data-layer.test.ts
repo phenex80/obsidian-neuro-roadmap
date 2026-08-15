@@ -1474,7 +1474,7 @@ test('indexer rebuild removes stale out-of-scope nodes without reading excluded 
   const indexer = new RoadmapIndexer(app);
 
   indexer.setParserOptions(createDefaultParserOptions());
-  await indexer.initialize();
+  await indexer.completeInitialIndex();
   assert.equal(indexer.getNodes().length, 1);
   assert.equal(cachedReadCount, 1);
 
@@ -1487,6 +1487,98 @@ test('indexer rebuild removes stale out-of-scope nodes without reading excluded 
   await indexer.rebuild();
   assert.deepEqual(indexer.getNodes(), []);
   assert.equal(cachedReadCount, 1);
+});
+
+test('indexer delivers the same ready snapshot when a view subscribes before or after metadata resolution', async () => {
+  const file = {
+    ...createFile('Subjects/Cold start task.md'),
+    extension: 'md',
+  } as TFile;
+  const readyCache = createCache(
+    { typ: 'task', title: 'Cold start task', predmet: 'ISKB02' },
+    [],
+  );
+  let currentCache: CachedMetadata | null = null;
+  let resolvedHandler: (() => void) | undefined;
+  const app = {
+    metadataCache: {
+      getFileCache: () => currentCache,
+      getFirstLinkpathDest: () => null,
+      on: (name: string, callback: () => void) => {
+        if (name === 'resolved') resolvedHandler = callback;
+        return {};
+      },
+    },
+    vault: {
+      getMarkdownFiles: () => [file],
+      cachedRead: async () => '',
+      on: () => ({}),
+    },
+  } as unknown as App;
+  const indexer = new RoadmapIndexer(app);
+  indexer.setParserOptions(createDefaultParserOptions());
+  indexer.registerEvents(() => undefined);
+
+  const earlySnapshots: Array<{ ready: boolean; nodeCount: number }> = [];
+  let resolveLoadingPublication: (() => void) | undefined;
+  const loadingPublished = new Promise<void>((resolve) => {
+    resolveLoadingPublication = resolve;
+  });
+  const unsubscribeEarly = indexer.subscribe((snapshot) => {
+    earlySnapshots.push({ ready: snapshot.ready, nodeCount: snapshot.nodes.length });
+    if (earlySnapshots.length === 2) resolveLoadingPublication?.();
+  });
+
+  const initialization = indexer.initialize();
+  await loadingPublished;
+  assert.deepEqual(earlySnapshots.at(-1), { ready: false, nodeCount: 0 });
+
+  currentCache = readyCache;
+  assert.ok(resolvedHandler);
+  resolvedHandler();
+  await initialization;
+
+  const earlyFinalSnapshot = earlySnapshots.at(-1);
+  assert.deepEqual(earlyFinalSnapshot, { ready: true, nodeCount: 1 });
+
+  let lateSnapshot: { ready: boolean; nodeCount: number } | undefined;
+  const unsubscribeLate = indexer.subscribe((snapshot) => {
+    lateSnapshot = { ready: snapshot.ready, nodeCount: snapshot.nodes.length };
+  });
+  assert.deepEqual(lateSnapshot, earlyFinalSnapshot);
+
+  unsubscribeLate();
+  unsubscribeEarly();
+});
+
+test('indexer distinguishes a pre-resolution empty scan from a confirmed empty vault', async () => {
+  const app = {
+    metadataCache: {
+      getFirstLinkpathDest: () => null,
+    },
+    vault: {
+      getMarkdownFiles: () => [],
+    },
+  } as unknown as App;
+  const indexer = new RoadmapIndexer(app);
+  const snapshots: Array<{ ready: boolean; nodeCount: number }> = [];
+  let resolveInitialScan: (() => void) | undefined;
+  const initialScanPublished = new Promise<void>((resolve) => {
+    resolveInitialScan = resolve;
+  });
+  const unsubscribe = indexer.subscribe((snapshot) => {
+    snapshots.push({ ready: snapshot.ready, nodeCount: snapshot.nodes.length });
+    if (snapshots.length === 2) resolveInitialScan?.();
+  });
+
+  const initialization = indexer.initialize();
+  await initialScanPublished;
+  assert.deepEqual(snapshots.at(-1), { ready: false, nodeCount: 0 });
+
+  await indexer.completeInitialIndex();
+  await initialization;
+  assert.deepEqual(snapshots.at(-1), { ready: true, nodeCount: 0 });
+  unsubscribe();
 });
 
 test('wikilink and unambiguous plain subject linkpath share one canonical identity', () => {

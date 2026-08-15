@@ -7,6 +7,7 @@
 
   let { indexer, config }: { indexer: RoadmapIndexer; config: EmbeddedRoadmapConfig } = $props();
   let nodes = $state<readonly RoadmapNode[]>([]);
+  let indexReady = $state(false);
   let cycles = $state<readonly (readonly string[])[]>([]);
   let scopedNodes = $derived(
     config.subjectPath === undefined
@@ -23,8 +24,9 @@
   let unscheduledNodes = $derived(scopedNodes.filter((node) => node.startDate === undefined || node.dueDate === undefined));
 
   onMount(() =>
-    indexer.subscribe((updatedNodes) => {
-      nodes = updatedNodes;
+    indexer.subscribe((snapshot) => {
+      nodes = snapshot.nodes;
+      indexReady = snapshot.ready;
       cycles = indexer.getCircularDependencyCycles();
     }),
   );
@@ -37,7 +39,9 @@
   </header>
   <CircularDependencyAlert {cycles} />
 
-  {#if scopedNodes.length === 0}
+  {#if !indexReady}
+    <p class="empty-state" role="status" aria-live="polite">Indexing roadmap…</p>
+  {:else if scopedNodes.length === 0}
     <p class="empty-state">No roadmap nodes match this scope.</p>
   {:else if config.mode === 'gantt'}
     <ol class:compact={config.view === 'compact'} class="timeline-list">
