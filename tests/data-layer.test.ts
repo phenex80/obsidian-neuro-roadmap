@@ -25,6 +25,16 @@ import { CalendarIdentityManager, calendarItemLocator } from '../src/core/Calend
 import { exportCalendarEventsToICS, IcsCalendarProvider } from '../src/calendar/IcsCalendarProvider';
 import type { CalendarEventProjection } from '../src/core/CalendarCore';
 import { CalendarExportService } from '../src/core/CalendarExportService';
+import {
+  GOOGLE_CALENDAR_SCOPES,
+  GoogleAuthClient,
+  GoogleAuthError,
+} from '../src/calendar/GoogleAuth';
+import type {
+  CalendarHttpRequest,
+  CalendarHttpResponse,
+  CalendarHttpTransport,
+} from '../src/calendar/CalendarHttpTransport';
 import { buildSubjectSummaries } from '../src/core/DashboardMetrics';
 import { classifyHorizon, formatRelativeTaskDate } from '../src/core/HorizonPlanner';
 import { migrateRoadmapSettingsData } from '../src/core/SettingsMigration';
@@ -267,6 +277,97 @@ test('ICS provider advertises file-only capabilities without remote APIs', async
     delete: false,
     reminders: true,
   });
+});
+
+test('Google installed-app authorization uses loopback PKCE and required scopes', async () => {
+  const transport = new QueueCalendarTransport([]);
+  const client = new GoogleAuthClient(transport, createSecretStore());
+  const session = await client.beginAuthorization(
+    { clientId: 'desktop-client.apps.googleusercontent.com', refreshTokenSecretId: 'google-token' },
+    'http://127.0.0.1:49152/oauth2/callback',
+  );
+  const url = new URL(session.authorizationUrl);
+
+  assert.equal(url.origin, 'https://accounts.google.com');
+  assert.equal(url.searchParams.get('response_type'), 'code');
+  assert.equal(url.searchParams.get('redirect_uri'), session.redirectUri);
+  assert.equal(url.searchParams.get('code_challenge_method'), 'S256');
+  assert.notEqual(url.searchParams.get('code_challenge'), session.codeVerifier);
+  assert.equal(url.searchParams.get('access_type'), 'offline');
+  assert.equal(url.searchParams.get('prompt'), 'consent');
+  assert.deepEqual(url.searchParams.get('scope')?.split(' '), [...GOOGLE_CALENDAR_SCOPES]);
+});
+
+test('Google authorization validates state and stores refresh tokens outside settings', async () => {
+  const secrets = new Map<string, string>();
+  const transport = new QueueCalendarTransport([
+    jsonResponse(200, {
+      access_token: 'access-token',
+      refresh_token: 'refresh-token',
+      expires_in: 3600,
+      scope: GOOGLE_CALENDAR_SCOPES.join(' '),
+    }),
+  ]);
+  const client = new GoogleAuthClient(transport, createSecretStore(secrets), () => 1_000);
+  const configuration = {
+    clientId: 'desktop-client.apps.googleusercontent.com',
+    refreshTokenSecretId: 'google-token',
+  };
+  const session = await client.beginAuthorization(
+    configuration,
+    'http://127.0.0.1:49152/oauth2/callback',
+  );
+  await assert.rejects(
+    client.completeAuthorization(configuration, session, {
+      state: 'wrong-state',
+      code: 'authorization-code',
+      error: null,
+    }),
+    (error: unknown) => error instanceof GoogleAuthError && error.kind === 'authorization-expired',
+  );
+  const token = await client.completeAuthorization(configuration, session, {
+    state: session.state,
+    code: 'authorization-code',
+    error: null,
+  });
+
+  assert.equal(token.accessToken, 'access-token');
+  assert.equal(secrets.get('google-token'), 'refresh-token');
+  assert.doesNotMatch(transport.requests[0]?.body ?? '', /client_secret/u);
+  assert.match(transport.requests[0]?.body ?? '', /code_verifier=/u);
+});
+
+test('Google refresh, revocation, and revoked-grant errors preserve secure lifecycle', async () => {
+  const secrets = new Map([['google-token', 'refresh-token']]);
+  const transport = new QueueCalendarTransport([
+    jsonResponse(200, {
+      access_token: 'refreshed-access-token',
+      expires_in: 3600,
+      scope: GOOGLE_CALENDAR_SCOPES.join(' '),
+    }),
+    jsonResponse(200, null),
+  ]);
+  const configuration = {
+    clientId: 'desktop-client.apps.googleusercontent.com',
+    refreshTokenSecretId: 'google-token',
+  };
+  const client = new GoogleAuthClient(transport, createSecretStore(secrets));
+
+  assert.equal(await client.getAccessToken(configuration), 'refreshed-access-token');
+  await client.disconnect(configuration);
+  assert.equal(secrets.get('google-token'), '');
+  assert.match(transport.requests[0]?.body ?? '', /grant_type=refresh_token/u);
+  assert.match(transport.requests[1]?.body ?? '', /token=refresh-token/u);
+
+  secrets.set('google-token', 'revoked-token');
+  const revoked = new GoogleAuthClient(
+    new QueueCalendarTransport([jsonResponse(400, { error: 'invalid_grant' })]),
+    createSecretStore(secrets),
+  );
+  await assert.rejects(
+    revoked.getAccessToken(configuration),
+    (error: unknown) => error instanceof GoogleAuthError && error.kind === 'authentication-expired',
+  );
 });
 
 test('calendar export service distinguishes filtered selection from all eligible items', async () => {
@@ -926,5 +1027,31 @@ function createNode(
     completed: false,
     writeKeys: { startDate: 'start', dueDate: 'due', status: 'status' },
     ...overrides,
+  };
+}
+
+class QueueCalendarTransport implements CalendarHttpTransport {
+  readonly requests: CalendarHttpRequest[] = [];
+
+  constructor(private readonly responses: CalendarHttpResponse[]) {}
+
+  async request(request: CalendarHttpRequest): Promise<CalendarHttpResponse> {
+    this.requests.push(request);
+    const response = this.responses.shift();
+    if (response === undefined) throw new Error('No queued calendar HTTP response.');
+    return response;
+  }
+}
+
+function jsonResponse(status: number, json: unknown): CalendarHttpResponse {
+  return { status, headers: {}, json, text: JSON.stringify(json) };
+}
+
+function createSecretStore(values = new Map<string, string>()) {
+  return {
+    getSecret: (id: string) => values.get(id) ?? null,
+    setSecret: (id: string, value: string) => {
+      values.set(id, value);
+    },
   };
 }
