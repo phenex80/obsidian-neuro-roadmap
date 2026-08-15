@@ -33,6 +33,7 @@ import {
 } from '../src/calendar/MicrosoftAuth';
 import {
   MicrosoftCalendarProvider,
+  MicrosoftGraphError,
   toMicrosoftGraphEvent,
 } from '../src/calendar/MicrosoftCalendarProvider';
 import { CalendarSyncEngine } from '../src/core/CalendarSyncEngine';
@@ -520,6 +521,46 @@ test('Microsoft provider refreshes once on 401, respects Retry-After, and treats
   assert.equal(await provider.eventExists({ calendarId: 'calendar', eventId: 'missing' }), false);
   await provider.deleteEvent({ calendarId: 'calendar', eventId: 'missing' });
   assert.equal(requests.length, 5);
+});
+
+test('Microsoft provider classifies offline, permission, and deleted-calendar failures without local fallback', async () => {
+  const configuration = () => ({ clientId: 'client', tenant: 'common', refreshTokenSecretId: 'secret' });
+  const tokens = {
+    getAccessToken: async () => 'access-token',
+    invalidateAccessToken: () => undefined,
+  };
+  const offline = new MicrosoftCalendarProvider(
+    configuration,
+    tokens,
+    { request: async () => { throw new Error('Network unavailable'); } },
+    async () => undefined,
+  );
+  await assert.rejects(
+    offline.listCalendars(),
+    (error: unknown) => error instanceof MicrosoftGraphError && error.kind === 'network',
+  );
+
+  const forbidden = new MicrosoftCalendarProvider(
+    configuration,
+    tokens,
+    { request: async () => httpResponse(403, { error: { message: 'Consent was revoked' } }) },
+    async () => undefined,
+  );
+  await assert.rejects(
+    forbidden.listCalendars(),
+    (error: unknown) => error instanceof MicrosoftGraphError && error.kind === 'permission',
+  );
+
+  const deletedCalendar = new MicrosoftCalendarProvider(
+    configuration,
+    tokens,
+    { request: async () => httpResponse(404, { error: { message: 'Calendar not found' } }) },
+    async () => undefined,
+  );
+  await assert.rejects(
+    deletedCalendar.createEvent('deleted-calendar', createCalendarEvent('safe-source')),
+    (error: unknown) => error instanceof MicrosoftGraphError && error.kind === 'not-found',
+  );
 });
 
 test('Microsoft reconciliation preserves mapping across edits, restart, calendar switch, exclusion, and source deletion', async () => {
