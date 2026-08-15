@@ -207,6 +207,10 @@ export class MicrosoftAuthClient {
     }
   }
 
+  invalidateAccessToken(): void {
+    this.cachedToken = null;
+  }
+
   hasRefreshToken(configuration: MicrosoftAuthConfiguration): boolean {
     if (configuration.refreshTokenSecretId.length === 0) return false;
     return (this.secrets.getSecret(configuration.refreshTokenSecretId)?.length ?? 0) > 0;

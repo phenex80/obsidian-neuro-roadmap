@@ -33,10 +33,12 @@ export interface CalendarProvider {
   readonly capabilities: CalendarProviderCapabilities;
   initialize(): Promise<CalendarConnectionStatus>;
   listCalendars(): Promise<readonly CalendarDescriptor[]>;
+  createCalendar?(name: string): Promise<CalendarDescriptor>;
   exportEvents?(events: readonly CalendarEventProjection[]): string;
   createEvent?(calendarId: string, event: CalendarEventProjection): Promise<ExternalCalendarEventRef>;
   updateEvent?(reference: ExternalCalendarEventRef, event: CalendarEventProjection): Promise<void>;
   deleteEvent?(reference: ExternalCalendarEventRef): Promise<void>;
+  eventExists?(reference: ExternalCalendarEventRef): Promise<boolean>;
 }
 
 export interface CalendarSyncStateEntry extends CalendarSyncRecord {

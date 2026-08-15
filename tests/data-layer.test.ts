@@ -31,6 +31,10 @@ import {
   type MicrosoftHttpRequest,
   type MicrosoftHttpResponse,
 } from '../src/calendar/MicrosoftAuth';
+import {
+  MicrosoftCalendarProvider,
+  toMicrosoftGraphEvent,
+} from '../src/calendar/MicrosoftCalendarProvider';
 import { buildSubjectSummaries } from '../src/core/DashboardMetrics';
 import { classifyHorizon, formatRelativeTaskDate } from '../src/core/HorizonPlanner';
 import { migrateRoadmapSettingsData } from '../src/core/SettingsMigration';
@@ -406,6 +410,110 @@ test('Microsoft refresh rotates the stored token and revoked authorization requi
   );
   auth.disconnect(configuration);
   assert.equal(secrets.get('refresh-secret'), '');
+});
+
+test('Microsoft provider translates Calendar Core events to free all-day Graph events', () => {
+  const event = createCalendarEvent('stable-unicode-id', {
+    title: 'ISKB02 · Záverečná skúška',
+    description: 'Predmet: ISKB02\nManaged by Obsidian Neuro Roadmap',
+    startDate: '2026-12-10',
+    endDateExclusive: '2026-12-11',
+    reminderMinutes: 60,
+  });
+  const payload = toMicrosoftGraphEvent(event, true);
+
+  assert.equal(payload.subject, 'ISKB02 · Záverečná skúška');
+  assert.deepEqual(payload.start, { dateTime: '2026-12-10T00:00:00', timeZone: 'UTC' });
+  assert.deepEqual(payload.end, { dateTime: '2026-12-11T00:00:00', timeZone: 'UTC' });
+  assert.equal(payload.isAllDay, true);
+  assert.equal(payload.showAs, 'free');
+  assert.equal(payload.isReminderOn, true);
+  assert.equal(payload.reminderMinutesBeforeStart, 60);
+  assert.equal(payload.transactionId, 'stable-unicode-id');
+
+  const update = toMicrosoftGraphEvent({ ...event, reminderMinutes: null }, false);
+  assert.equal(update.isReminderOn, false);
+  assert.equal(update.reminderMinutesBeforeStart, undefined);
+  assert.equal(update.transactionId, undefined);
+});
+
+test('Microsoft provider performs calendar and event lifecycle through Graph IDs', async () => {
+  const requests: MicrosoftHttpRequest[] = [];
+  const responses = [
+    httpResponse(200, {
+      id: 'account-id',
+      displayName: 'Ada Lovelace',
+      mail: null,
+      userPrincipalName: 'ada@example.com',
+    }),
+    httpResponse(200, {
+      value: [
+        { id: 'secondary', name: 'Study', isDefaultCalendar: false },
+        { id: 'primary', name: 'Calendar', isDefaultCalendar: true },
+      ],
+    }),
+    httpResponse(201, { id: 'roadmap-calendar', name: 'Neuro Roadmap' }),
+    httpResponse(201, { id: 'event-id' }),
+    httpResponse(200, { id: 'event-id' }),
+    httpResponse(200, { id: 'event-id' }),
+    httpResponse(204, null),
+  ];
+  const provider = createMicrosoftProvider(requests, responses);
+
+  assert.deepEqual(await provider.getAccountProfile(), {
+    id: 'account-id',
+    displayName: 'Ada Lovelace',
+    email: 'ada@example.com',
+  });
+  assert.deepEqual((await provider.listCalendars()).map((calendar) => calendar.id), ['primary', 'secondary']);
+  assert.equal((await provider.createCalendar('Neuro Roadmap')).id, 'roadmap-calendar');
+  const reference = await provider.createEvent('roadmap-calendar', createCalendarEvent('stable-event'));
+  await provider.updateEvent(reference, createCalendarEvent('stable-event', { title: 'Renamed' }));
+  assert.equal(await provider.eventExists(reference), true);
+  await provider.deleteEvent(reference);
+
+  assert.equal(reference.eventId, 'event-id');
+  assert.equal(requests[3]?.method, 'POST');
+  assert.match(requests[3]?.url ?? '', /\/me\/calendars\/roadmap-calendar\/events$/u);
+  assert.equal(JSON.parse(requests[3]?.body ?? '{}').showAs, 'free');
+  assert.equal(requests[4]?.method, 'PATCH');
+  assert.equal(JSON.parse(requests[4]?.body ?? '{}').transactionId, undefined);
+  assert.equal(requests[6]?.method, 'DELETE');
+});
+
+test('Microsoft provider refreshes once on 401, respects Retry-After, and treats missing events idempotently', async () => {
+  const requests: MicrosoftHttpRequest[] = [];
+  const waits: number[] = [];
+  let invalidations = 0;
+  const responses = [
+    httpResponse(401, { error: { message: 'Expired token' } }),
+    httpResponse(429, { error: { message: 'Throttled' } }, { 'Retry-After': '3' }),
+    httpResponse(201, { id: 'created-after-retry' }),
+    httpResponse(404, { error: { message: 'Event was deleted externally' } }),
+    httpResponse(404, { error: { message: 'Event was deleted externally' } }),
+  ];
+  const provider = new MicrosoftCalendarProvider(
+    () => ({ clientId: 'client', tenant: 'common', refreshTokenSecretId: 'secret' }),
+    {
+      getAccessToken: async () => 'access-token',
+      invalidateAccessToken: () => { invalidations += 1; },
+    },
+    {
+      request: async (request) => {
+        requests.push(request);
+        return responses.shift() ?? httpResponse(500, {});
+      },
+    },
+    async (milliseconds) => { waits.push(milliseconds); },
+  );
+
+  const reference = await provider.createEvent('calendar', createCalendarEvent('retry-safe'));
+  assert.equal(reference.eventId, 'created-after-retry');
+  assert.equal(invalidations, 1);
+  assert.deepEqual(waits, [3_000]);
+  assert.equal(await provider.eventExists({ calendarId: 'calendar', eventId: 'missing' }), false);
+  await provider.deleteEvent({ calendarId: 'calendar', eventId: 'missing' });
+  assert.equal(requests.length, 5);
 });
 
 test('roadmap anchor notes contribute inline tasks but are not task nodes', () => {
@@ -1025,6 +1133,30 @@ function createNode(
   };
 }
 
-function httpResponse(status: number, json: unknown): MicrosoftHttpResponse {
-  return { status, json, headers: {}, text: JSON.stringify(json) };
+function httpResponse(
+  status: number,
+  json: unknown,
+  headers: Readonly<Record<string, string>> = {},
+): MicrosoftHttpResponse {
+  return { status, json, headers, text: JSON.stringify(json) };
+}
+
+function createMicrosoftProvider(
+  requests: MicrosoftHttpRequest[],
+  responses: MicrosoftHttpResponse[],
+): MicrosoftCalendarProvider {
+  return new MicrosoftCalendarProvider(
+    () => ({ clientId: 'client', tenant: 'common', refreshTokenSecretId: 'secret' }),
+    {
+      getAccessToken: async () => 'access-token',
+      invalidateAccessToken: () => undefined,
+    },
+    {
+      request: async (request) => {
+        requests.push(request);
+        return responses.shift() ?? httpResponse(500, {});
+      },
+    },
+    async () => undefined,
+  );
 }
