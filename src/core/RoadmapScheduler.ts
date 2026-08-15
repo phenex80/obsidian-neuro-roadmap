@@ -1,8 +1,9 @@
-import { TFile, type App } from 'obsidian';
+import { Notice, TFile, type App } from 'obsidian';
 import { DependencyEngine } from './DependencyEngine';
 import type { RoadmapIndexer } from './Indexer';
 import type { RoadmapNode } from '../types';
 import type { PropertyKeyMap } from './SemanticMapping';
+import type { InlineFileMutationQueue } from './InlineFileMutationQueue';
 import {
   appendScratchpadText,
   createRoadmapNote,
@@ -29,18 +30,26 @@ export class RoadmapScheduler {
   constructor(
     private readonly app: App,
     indexer: RoadmapIndexer,
+    private readonly mutations: InlineFileMutationQueue,
   ) {
     this.dependencyEngine = new DependencyEngine(indexer);
   }
 
   async rescheduleNode(node: RoadmapNode, startDate: string, dueDate: string): Promise<void> {
     const dependentUpdates = this.dependencyEngine.calculateSoftDependencyUpdates(node, startDate);
-    await updateNodeDates(this.app, node, startDate, dueDate);
-    await updateNodeDatesBatch(this.app, dependentUpdates);
+    if (!await updateNodeDates(this.app, this.mutations, node, startDate, dueDate)) {
+      this.reportConflict();
+      return;
+    }
+    if (!await updateNodeDatesBatch(this.app, this.mutations, dependentUpdates)) {
+      this.reportConflict();
+    }
   }
 
   async scheduleUnscheduledNode(node: RoadmapNode, startDate: string, dueDate: string): Promise<void> {
-    await updateNodeDates(this.app, node, startDate, dueDate);
+    if (!await updateNodeDates(this.app, this.mutations, node, startDate, dueDate)) {
+      this.reportConflict();
+    }
   }
 
   async createNode(startDate: string, dueDate: string): Promise<void> {
@@ -65,7 +74,9 @@ export class RoadmapScheduler {
   }
 
   async setTaskCompletion(node: RoadmapNode, completed: boolean): Promise<boolean> {
-    return updateMarkdownTaskCompletion(this.app, node, completed);
+    const updated = await updateMarkdownTaskCompletion(this.app, this.mutations, node, completed);
+    if (!updated) this.reportConflict();
+    return updated;
   }
 
   async openSource(node: RoadmapNode): Promise<void> {
@@ -81,5 +92,9 @@ export class RoadmapScheduler {
       active: true,
       eState: node.sourceLine === undefined ? undefined : { line: node.sourceLine },
     });
+  }
+
+  private reportConflict(): void {
+    new Notice('Task changed externally and could not be identified safely. Refresh the roadmap and try again.');
   }
 }

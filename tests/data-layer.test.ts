@@ -109,9 +109,14 @@ import {
   replaceInlineTaskProperty,
   replaceInlineTaskStatus,
 } from '../src/core/InlineTaskProperties';
-import { InlineTaskPropertyWriter } from '../src/utils/obsidianHelpers';
+import {
+  InlineTaskPropertyWriter,
+  ensureInlineTaskBlockId,
+  updateMarkdownTaskCompletion,
+} from '../src/utils/obsidianHelpers';
 import { describeCalendarAction } from '../src/core/CalendarAction';
 import { TaskMetadataEditorIntegration } from '../src/ui/editor/TaskMetadataEditorExtension';
+import { InlineFileMutationQueue } from '../src/core/InlineFileMutationQueue';
 
 const GOOGLE_TEST_CLIENT_SECRET = 'desktop-client-secret-value';
 
@@ -288,14 +293,17 @@ test('calendar identity adds a minimal block ID only when an inline task needs o
       },
     },
   } as unknown as App;
+  const mutations = new InlineFileMutationQueue();
   const manager = new CalendarIdentityManager(
     app,
     () => records,
     async (nextRecords) => { records = nextRecords; },
     () => 'generated-stable-id',
+    mutations,
   );
   const result = await manager.ensureIdentity(createNode('Subjects/Tasks.md#L1', {
     path: 'Subjects/Tasks.md',
+    title: 'Submit paper',
     source: 'inline',
     sourceLine: 0,
   }));
@@ -2195,7 +2203,7 @@ test('serialized task property writes apply rapid edits without corrupting Markd
     sourceLine: 0,
     blockId: 'nr-cal-rapid',
   });
-  const writer = new InlineTaskPropertyWriter(app);
+  const writer = new InlineTaskPropertyWriter(app, new InlineFileMutationQueue());
   await Promise.all([
     writer.update(node, 'startDate', '2026-08-22'),
     writer.update(node, 'dueDate', '2026-08-30'),
@@ -2210,6 +2218,160 @@ test('serialized task property writes apply rapid edits without corrupting Markd
   assert.match(source, /\[priority:: high\]/u);
   assert.match(source, /\[unknown:: áno\]/u);
   assert.match(source, /\^nr-cal-rapid$/u);
+});
+
+test('stale line fallback moves with the original semantic task instead of mutating a replacement', async () => {
+  const fixture = createMarkdownMutationFixture({
+    'Tasks.md': '- [ ] Replacement task\n- [ ] Inserted note task\n- [ ] Original task',
+  });
+  const node = createNode('Tasks.md#L1', {
+    path: 'Tasks.md',
+    title: 'Original task',
+    sourceLine: 0,
+  });
+
+  assert.equal(
+    await updateMarkdownTaskCompletion(fixture.app, fixture.mutations, node, true),
+    true,
+  );
+  assert.equal(
+    fixture.source('Tasks.md'),
+    '- [ ] Replacement task\n- [ ] Inserted note task\n- [x] Original task',
+  );
+});
+
+test('missing or ambiguous stale inline tasks are rejected without modifying another checkbox', async () => {
+  const missing = createMarkdownMutationFixture({
+    'Tasks.md': '- [ ] Replacement task\n- [ ] Another task',
+  });
+  const node = createNode('Tasks.md#L1', {
+    path: 'Tasks.md',
+    title: 'Original task',
+    sourceLine: 0,
+  });
+  const beforeMissing = missing.source('Tasks.md');
+  assert.equal(
+    await updateMarkdownTaskCompletion(missing.app, missing.mutations, node, true),
+    false,
+  );
+  assert.equal(missing.source('Tasks.md'), beforeMissing);
+
+  const ambiguous = createMarkdownMutationFixture({
+    'Tasks.md': '- [ ] Replacement task\n- [ ] Original task\n- [ ] Original task',
+  });
+  const beforeAmbiguous = ambiguous.source('Tasks.md');
+  assert.equal(
+    await updateMarkdownTaskCompletion(ambiguous.app, ambiguous.mutations, node, true),
+    false,
+  );
+  assert.equal(ambiguous.source('Tasks.md'), beforeAmbiguous);
+});
+
+test('stable block identity resolves a moved task and duplicate managed IDs fail safely', async () => {
+  const fixture = createMarkdownMutationFixture({
+    'Tasks.md': '- [ ] Replacement task\n- [ ] Original task ^nr-cal-stable',
+  });
+  const stable = createNode('Tasks.md#^nr-cal-stable', {
+    path: 'Tasks.md',
+    title: 'Original task',
+    sourceLine: 0,
+    blockId: 'nr-cal-stable',
+  });
+  assert.equal(
+    await updateMarkdownTaskCompletion(fixture.app, fixture.mutations, stable, true),
+    true,
+  );
+  assert.match(fixture.source('Tasks.md'), /- \[x\] Original task \^nr-cal-stable$/u);
+
+  const duplicate = createMarkdownMutationFixture({
+    'Tasks.md': '- [ ] Original task ^nr-cal-a ^nr-cal-b',
+  });
+  assert.equal(
+    await ensureInlineTaskBlockId(
+      duplicate.app,
+      duplicate.mutations,
+      createNode('Tasks.md#L1', { path: 'Tasks.md', title: 'Original task', sourceLine: 0 }),
+    ),
+    null,
+  );
+  assert.equal(duplicate.source('Tasks.md'), '- [ ] Original task ^nr-cal-a ^nr-cal-b');
+});
+
+test('concurrent calendar identity creation reuses exactly one block and internal ID', async () => {
+  const fixture = createMarkdownMutationFixture({ 'Tasks.md': '- [ ] Original task' });
+  let records: Record<string, string> = {};
+  let identitySequence = 0;
+  const manager = new CalendarIdentityManager(
+    fixture.app,
+    () => records,
+    async (nextRecords) => { records = nextRecords; },
+    () => `identity-${++identitySequence}`,
+    fixture.mutations,
+  );
+  const node = createNode('Tasks.md#L1', {
+    path: 'Tasks.md',
+    title: 'Original task',
+    sourceLine: 0,
+  });
+  const [first, second] = await Promise.all([
+    manager.ensureIdentity(node),
+    manager.ensureIdentity(node),
+  ]);
+  const blockIds = fixture.source('Tasks.md').match(/\^nr-cal-[A-Za-z0-9-]+/gu) ?? [];
+
+  assert.equal(blockIds.length, 1);
+  assert.equal(first?.node.blockId, second?.node.blockId);
+  assert.equal(first?.internalItemId, second?.internalItemId);
+  assert.equal(identitySequence, 1);
+});
+
+test('shared inline mutation queue serializes one file while allowing different files concurrently', async () => {
+  const queue = new InlineFileMutationQueue();
+  let releaseFirst: (() => void) | undefined;
+  let secondSameFileStarted = false;
+  let otherFileStarted = false;
+  const first = queue.run('A.md', () => new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  }));
+  await Promise.resolve();
+  const secondSameFile = queue.run('A.md', async () => {
+    secondSameFileStarted = true;
+  });
+  const otherFile = queue.run('B.md', async () => {
+    otherFileStarted = true;
+  });
+  await otherFile;
+
+  assert.equal(otherFileStarted, true);
+  assert.equal(secondSameFileStarted, false);
+  releaseFirst?.();
+  await Promise.all([first, secondSameFile]);
+  assert.equal(secondSameFileStarted, true);
+
+  await assert.rejects(
+    queue.run('C.md', async () => { throw new Error('expected mutation failure'); }),
+    /expected mutation failure/u,
+  );
+  let recoveredAfterFailure = false;
+  await queue.run('C.md', async () => { recoveredAfterFailure = true; });
+  assert.equal(recoveredAfterFailure, true);
+});
+
+test('inline mutations preserve CRLF and LF conventions', async () => {
+  const fixture = createMarkdownMutationFixture({
+    'CRLF.md': '- [ ] First\r\n- [ ] Second\r\n',
+    'LF.md': '- [ ] First\n- [ ] Second\n',
+  });
+  for (const path of ['CRLF.md', 'LF.md']) {
+    const node = createNode(`${path}#L1`, { path, title: 'First', sourceLine: 0 });
+    assert.equal(
+      await updateMarkdownTaskCompletion(fixture.app, fixture.mutations, node, true),
+      true,
+    );
+  }
+
+  assert.equal(fixture.source('CRLF.md'), '- [x] First\r\n- [ ] Second\r\n');
+  assert.equal(fixture.source('LF.md'), '- [x] First\n- [ ] Second\n');
 });
 
 test('inline property editor reuses configured and existing mapped write keys', () => {
@@ -2307,6 +2469,32 @@ function createFile(path: string): TFile {
     path,
     basename: filename.endsWith('.md') ? filename.slice(0, -3) : filename,
   } as TFile;
+}
+
+function createMarkdownMutationFixture(initialSources: Readonly<Record<string, string>>) {
+  const sources = new Map(Object.entries(initialSources));
+  const files = new Map(
+    Object.keys(initialSources).map((path) => [
+      path,
+      { ...createFile(path), extension: 'md' } as TFile,
+    ]),
+  );
+  const app = {
+    vault: {
+      getAbstractFileByPath: (path: string) => files.get(path) ?? null,
+      process: async (file: TFile, transform: (value: string) => string) => {
+        await Promise.resolve();
+        const current = sources.get(file.path);
+        if (current === undefined) throw new Error(`Missing test source for ${file.path}`);
+        sources.set(file.path, transform(current));
+      },
+    },
+  } as unknown as App;
+  return {
+    app,
+    mutations: new InlineFileMutationQueue(),
+    source: (path: string) => sources.get(path) ?? '',
+  };
 }
 
 function createCache(

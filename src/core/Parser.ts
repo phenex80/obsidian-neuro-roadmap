@@ -325,7 +325,11 @@ export class RoadmapParser {
         file,
       ) ?? inheritedProject;
       const matchedBlockId = BLOCK_ID_PATTERN.exec(taskBody);
-      const blockId = task.id ?? matchedBlockId?.[1];
+      const managedBlockIds = Array.from(
+        taskBody.matchAll(/(?:^|\s)\^(nr-cal-[A-Za-z0-9-]+)(?=\s|$)/gu),
+        (match) => match[1],
+      );
+      const blockId = managedBlockIds.length > 1 ? undefined : task.id ?? matchedBlockId?.[1];
       const title = stripMarkdownTaskTitle(taskBody);
       if (title.length === 0) {
         continue;

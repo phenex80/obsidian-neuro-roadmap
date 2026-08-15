@@ -64,6 +64,7 @@ import { GlobalItemView, VIEW_TYPE_NEURO_ROADMAP } from './ui/views/GlobalItemVi
 import { registerRoadmapCodeblockProcessor } from './ui/processors/CodeblockProcessor';
 import { calendarCommitmentDate, isCalendarEligible } from './core/CalendarCore';
 import { TaskMetadataEditorIntegration } from './ui/editor/TaskMetadataEditorExtension';
+import { InlineFileMutationQueue } from './core/InlineFileMutationQueue';
 
 const DEFAULT_SETTINGS: RoadmapSettings = roadmapSettingsSchema.parse({});
 const PROPERTY_LABELS: Readonly<Record<CanonicalPropertyField, string>> = {
@@ -96,8 +97,9 @@ const CALENDAR_TYPE_LABELS: Readonly<Record<CalendarSemanticType, string>> = {
 export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
   settings: RoadmapSettings = DEFAULT_SETTINGS;
   readonly indexer = new RoadmapIndexer(this.app);
-  readonly scheduler = new RoadmapScheduler(this.app, this.indexer);
-  readonly taskPropertyWriter = new InlineTaskPropertyWriter(this.app);
+  readonly inlineMutations = new InlineFileMutationQueue();
+  readonly scheduler = new RoadmapScheduler(this.app, this.indexer, this.inlineMutations);
+  readonly taskPropertyWriter = new InlineTaskPropertyWriter(this.app, this.inlineMutations);
   readonly calendarIdentity = new CalendarIdentityManager(
     this.app,
     () => this.settings.calendarState.itemIdentities,
@@ -105,6 +107,8 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
       this.settings.calendarState.itemIdentities = itemIdentities;
       await this.saveSettings(false, false);
     },
+    undefined,
+    this.inlineMutations,
   );
   readonly calendarExporter = new CalendarExportService(
     this.calendarIdentity,
@@ -206,6 +210,7 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     this.activeGoogleLoopback?.close();
     this.activeGoogleLoopback = null;
     this.googleSyncController.dispose();
+    this.inlineMutations.dispose();
     this.taskMetadataEditor?.dispose();
     this.taskMetadataEditor = null;
     this.settingsListeners.clear();

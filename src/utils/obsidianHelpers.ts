@@ -7,6 +7,8 @@ import {
   type EditableTaskProperty,
 } from '../core/InlineTaskProperties';
 import type { NodeStatus } from '../types';
+import { isCompletedTaskMarker, stripMarkdownTaskTitle } from '../core/Parser';
+import type { InlineFileMutationQueue } from '../core/InlineFileMutationQueue';
 
 export interface NodeDateUpdate {
   node: RoadmapNode;
@@ -27,81 +29,59 @@ export interface RoadmapCreationKeys {
 
 /** Serializes minimal inline-property edits per file and preserves unrelated Markdown. */
 export class InlineTaskPropertyWriter {
-  private readonly queuesByPath = new Map<string, Promise<void>>();
-
-  constructor(private readonly app: App) {}
+  constructor(
+    private readonly app: App,
+    private readonly mutations: InlineFileMutationQueue,
+  ) {}
 
   update(
     node: RoadmapNode,
     field: Exclude<EditableTaskProperty, 'status'>,
     value: string | null,
   ): Promise<boolean> {
-    return this.enqueue(node, (line) => replaceInlineTaskProperty(line, node.writeKeys[field], value));
+    return this.apply(node, (line) => replaceInlineTaskProperty(line, node.writeKeys[field], value));
   }
 
   updateStatus(node: RoadmapNode, status: NodeStatus, value: string): Promise<boolean> {
-    return this.enqueue(
+    return this.apply(
       node,
       (line) => replaceInlineTaskStatus(line, node.writeKeys.status, value, status),
     );
   }
 
-  private enqueue(node: RoadmapNode, transformLine: (line: string) => string): Promise<boolean> {
-    const previous = this.queuesByPath.get(node.path) ?? Promise.resolve();
-    let resolveResult: (updated: boolean) => void = () => undefined;
-    let rejectResult: (error: unknown) => void = () => undefined;
-    const result = new Promise<boolean>((resolve, reject) => {
-      resolveResult = resolve;
-      rejectResult = reject;
-    });
-    const operation = previous
-      .catch(() => undefined)
-      .then(async () => {
-        try {
-          resolveResult(await this.apply(node, transformLine));
-        } catch (error) {
-          rejectResult(error);
-        }
-      });
-    this.queuesByPath.set(node.path, operation);
-    void operation.finally(() => {
-      if (this.queuesByPath.get(node.path) === operation) {
-        this.queuesByPath.delete(node.path);
-      }
-    });
-    return result;
-  }
-
   private async apply(node: RoadmapNode, transformLine: (line: string) => string): Promise<boolean> {
     if (node.source !== 'inline') return false;
-    const file = getMarkdownFile(this.app, node.path);
-    if (file === null) return false;
-    let updated = false;
-    await this.app.vault.process(file, (source) => {
-      const lines = source.split(/\r?\n/u);
-      const lineIndex = findInlineTaskLine(lines, node);
-      const originalLine = lines[lineIndex];
-      if (lineIndex === -1 || originalLine === undefined) return source;
-      const nextLine = transformLine(originalLine);
-      if (nextLine === originalLine) return source;
-      lines[lineIndex] = nextLine;
-      updated = true;
-      return lines.join('\n');
+    return this.mutations.run(node.path, async () => {
+      const file = getMarkdownFile(this.app, node.path);
+      if (file === null) return false;
+      let updated = false;
+      await this.app.vault.process(file, (source) => {
+        const document = splitSourceLines(source);
+        const lineIndex = resolveInlineTaskLine(document.lines, node);
+        const originalLine = document.lines[lineIndex];
+        if (lineIndex === -1 || originalLine === undefined) return source;
+        const nextLine = transformLine(originalLine);
+        if (nextLine === originalLine) return source;
+        document.lines[lineIndex] = nextLine;
+        updated = true;
+        return document.lines.join(document.lineEnding);
+      });
+      return updated;
     });
-    return updated;
   }
 }
 
 /** Updates only the date fields belonging to a roadmap node. */
 export async function updateNodeDates(
   app: App,
+  mutations: InlineFileMutationQueue,
   node: RoadmapNode,
   startDate: string,
   dueDate: string,
-): Promise<void> {
+): Promise<boolean> {
   const file = getMarkdownFile(app, node.path);
   if (file === null) {
-    return;
+    return false;
   }
 
   if (node.source === 'frontmatter') {
@@ -109,83 +89,87 @@ export async function updateNodeDates(
       frontmatter[node.writeKeys.startDate] = startDate;
       frontmatter[node.writeKeys.dueDate] = dueDate;
     });
-    return;
+    return true;
   }
 
-  await updateInlineTaskDates(app, file, node, startDate, dueDate);
+  return updateInlineTaskDates(app, mutations, file, node, startDate, dueDate);
 }
 
 /** Writes several dependency updates sequentially to prevent same-file write races. */
-export async function updateNodeDatesBatch(app: App, updates: readonly NodeDateUpdate[]): Promise<void> {
+export async function updateNodeDatesBatch(
+  app: App,
+  mutations: InlineFileMutationQueue,
+  updates: readonly NodeDateUpdate[],
+): Promise<boolean> {
   for (const update of updates) {
-    await updateNodeDates(app, update.node, update.startDate, update.dueDate);
+    if (!await updateNodeDates(app, mutations, update.node, update.startDate, update.dueDate)) {
+      return false;
+    }
   }
+  return true;
 }
 
 /** Atomically checks or unchecks the original Markdown checkbox task. */
 export async function updateMarkdownTaskCompletion(
   app: App,
+  mutations: InlineFileMutationQueue,
   node: RoadmapNode,
   completed: boolean,
 ): Promise<boolean> {
   if (node.source !== 'inline') {
     return false;
   }
-  const file = getMarkdownFile(app, node.path);
-  if (file === null) {
-    return false;
-  }
-
-  let updated = false;
-  await app.vault.process(file, (source) => {
-    const lines = source.split(/\r?\n/u);
-    const lineIndex = findInlineTaskLine(lines, node);
-    const originalLine = lines[lineIndex];
-    if (lineIndex === -1 || originalLine === undefined) {
-      return source;
-    }
-
-    const nextLine = replaceTaskCheckbox(originalLine, completed);
-    if (nextLine === originalLine) {
-      return source;
-    }
-    lines[lineIndex] = nextLine;
-    updated = true;
-    return lines.join('\n');
+  return mutations.run(node.path, async () => {
+    const file = getMarkdownFile(app, node.path);
+    if (file === null) return false;
+    let updated = false;
+    await app.vault.process(file, (source) => {
+      const document = splitSourceLines(source);
+      const lineIndex = resolveInlineTaskLine(document.lines, node);
+      const originalLine = document.lines[lineIndex];
+      if (lineIndex === -1 || originalLine === undefined) return source;
+      const nextLine = replaceTaskCheckbox(originalLine, completed);
+      if (nextLine === originalLine) return source;
+      document.lines[lineIndex] = nextLine;
+      updated = true;
+      return document.lines.join(document.lineEnding);
+    });
+    return updated;
   });
-  return updated;
 }
 
 /** Adds a stable Obsidian block ID only when a calendar operation needs one. */
 export async function ensureInlineTaskBlockId(
   app: App,
+  mutations: InlineFileMutationQueue,
   node: RoadmapNode,
 ): Promise<string | null> {
   if (node.source !== 'inline') {
     return null;
   }
-  if (node.blockId !== undefined) {
-    return node.blockId;
-  }
-  const file = getMarkdownFile(app, node.path);
-  if (file === null) {
-    return null;
-  }
-
-  const blockId = `nr-cal-${crypto.randomUUID().replaceAll('-', '')}`;
-  let applied = false;
-  await app.vault.process(file, (source) => {
-    const lines = source.split(/\r?\n/u);
-    const lineIndex = findInlineTaskLine(lines, node);
-    const originalLine = lines[lineIndex];
-    if (lineIndex === -1 || originalLine === undefined) {
-      return source;
-    }
-    lines[lineIndex] = `${originalLine.trimEnd()} ^${blockId}`;
-    applied = true;
-    return lines.join('\n');
+  return mutations.run(node.path, async () => {
+    const file = getMarkdownFile(app, node.path);
+    if (file === null) return null;
+    let resolvedBlockId: string | null = null;
+    await app.vault.process(file, (source) => {
+      const document = splitSourceLines(source);
+      const lineIndex = resolveInlineTaskLine(document.lines, node);
+      const originalLine = document.lines[lineIndex];
+      if (lineIndex === -1 || originalLine === undefined) return source;
+      const existingBlockIds = managedCalendarBlockIds(originalLine);
+      if (existingBlockIds.length > 1) return source;
+      const existingBlockId = existingBlockIds[0];
+      if (existingBlockId !== undefined) {
+        resolvedBlockId = existingBlockId;
+        return source;
+      }
+      const blockId = `nr-cal-${crypto.randomUUID().replaceAll('-', '')}`;
+      document.lines[lineIndex] = `${originalLine.trimEnd()} ^${blockId}`;
+      resolvedBlockId = blockId;
+      return document.lines.join(document.lineEnding);
+    });
+    return resolvedBlockId;
   });
-  return applied ? blockId : null;
 }
 
 /** Appends scratchpad text while preserving all existing note content. */
@@ -247,38 +231,87 @@ function getAvailablePath(app: App, basePath: string): string {
 
 async function updateInlineTaskDates(
   app: App,
+  mutations: InlineFileMutationQueue,
   file: TFile,
   node: RoadmapNode,
   startDate: string,
   dueDate: string,
-): Promise<void> {
-  await app.vault.process(file, (source) => {
-    const lines = source.split(/\r?\n/u);
-    const lineIndex = findInlineTaskLine(lines, node);
-    const originalLine = lines[lineIndex];
-    if (lineIndex === -1 || originalLine === undefined) {
-      return source;
-    }
-
-    const updatedLine = replaceInlineDateProperties(originalLine, node, startDate, dueDate);
-    if (updatedLine === originalLine) {
-      return source;
-    }
-    lines[lineIndex] = updatedLine;
-    return lines.join('\n');
+): Promise<boolean> {
+  return mutations.run(node.path, async () => {
+    let updated = false;
+    await app.vault.process(file, (source) => {
+      const document = splitSourceLines(source);
+      const lineIndex = resolveInlineTaskLine(document.lines, node);
+      const originalLine = document.lines[lineIndex];
+      if (lineIndex === -1 || originalLine === undefined) return source;
+      const updatedLine = replaceInlineDateProperties(originalLine, node, startDate, dueDate);
+      if (updatedLine === originalLine) return source;
+      document.lines[lineIndex] = updatedLine;
+      updated = true;
+      return document.lines.join(document.lineEnding);
+    });
+    return updated;
   });
 }
 
-function findInlineTaskLine(lines: readonly string[], node: RoadmapNode): number {
+function resolveInlineTaskLine(lines: readonly string[], node: RoadmapNode): number {
   if (node.blockId !== undefined) {
-    const blockPattern = new RegExp(`\\^${escapeRegExp(node.blockId)}\\s*$`, 'u');
-    return lines.findIndex((line) => isTaskLine(line) && blockPattern.test(line));
+    const matches = lines
+      .map((line, index) => {
+        const blockIds = managedCalendarBlockIds(line);
+        return blockIds.length === 1 && blockIds[0] === node.blockId ? index : -1;
+      })
+      .filter((index) => index >= 0);
+    return matches.length === 1 ? matches[0]! : -1;
   }
 
   const lineMatch = /#L(\d+)$/u.exec(node.id);
-  const lineNumber = lineMatch?.[1] === undefined ? Number.NaN : Number(lineMatch[1]);
-  const lineIndex = lineNumber - 1;
-  return lineIndex >= 0 && isTaskLine(lines[lineIndex] ?? '') ? lineIndex : -1;
+  const lineNumber = node.sourceLine === undefined
+    ? (lineMatch?.[1] === undefined ? Number.NaN : Number(lineMatch[1]) - 1)
+    : node.sourceLine;
+  if (lineNumber >= 0 && taskLineMatchesNode(lines[lineNumber] ?? '', node)) {
+    return lineNumber;
+  }
+
+  const candidates = lines
+    .map((line, index) => taskLineMatchesNode(line, node) ? index : -1)
+    .filter((index) => index >= 0);
+  if (candidates.length === 1) return candidates[0]!;
+  return -1;
+}
+
+function taskLineMatchesNode(line: string, node: RoadmapNode): boolean {
+  if (managedCalendarBlockIds(line).length > 1) return false;
+  const body = taskLineBody(line);
+  return body !== null
+    && taskLineCompleted(line) === node.completed
+    && normalizeTaskTitle(stripMarkdownTaskTitle(body)) === normalizeTaskTitle(node.title);
+}
+
+function taskLineBody(line: string): string | null {
+  return /^\s*[-*+]\s+\[([^\]])\]\s*(.*?)\s*$/u.exec(line)?.[2] ?? null;
+}
+
+function taskLineCompleted(line: string): boolean {
+  return isCompletedTaskMarker(/^\s*[-*+]\s+\[([^\]])\]/u.exec(line)?.[1] ?? '');
+}
+
+function normalizeTaskTitle(value: string): string {
+  return value.normalize('NFC').replace(/\s+/gu, ' ').trim().toLocaleLowerCase();
+}
+
+function managedCalendarBlockIds(line: string): string[] {
+  return Array.from(
+    line.matchAll(/(?:^|\s)\^(nr-cal-[A-Za-z0-9-]+)(?=\s|$)/gu),
+    (match) => match[1]!,
+  );
+}
+
+function splitSourceLines(source: string): { lines: string[]; lineEnding: '\r\n' | '\n' } {
+  return {
+    lines: source.split(/\r?\n/u),
+    lineEnding: source.includes('\r\n') ? '\r\n' : '\n',
+  };
 }
 
 function replaceInlineDateProperties(
@@ -304,10 +337,6 @@ function replaceOrInsertProperty(line: string, property: string, value: string):
   }
 
   return `${line.slice(0, blockAnchor.index)}${insertion}${line.slice(blockAnchor.index)}`;
-}
-
-function isTaskLine(line: string): boolean {
-  return /^\s*[-*+]\s+\[[^\]]\]/u.test(line);
 }
 
 function escapeRegExp(value: string): string {
