@@ -4,15 +4,21 @@
   import {
     addDays,
     buildTimelineOverview,
-    createTimelineDomain,
+    collapsedTimelineBucketCount,
+    createTimelineDomainForScale,
     daysBetween,
     formatEntityLabel,
     formatNodeTitle,
     isNodeOverdue,
+    timelineDatePositionPercent,
+    timelineOverviewBucketCount,
+    timelineScaleDayWidth,
     todayDate,
     validDate,
+    type TimelineScale,
     type TimelineOverviewItem,
   } from '../../core/TimelineDomain';
+  import { ganttBarPresentation } from '../../core/GanttPresentation';
   import type { CalendarItemOverride, RoadmapNode } from '../../types';
   import CalendarActionButton from './CalendarActionButton.svelte';
 
@@ -32,7 +38,7 @@
     onToggleCalendar,
   }: {
     nodes: readonly RoadmapNode[];
-    scale: 'days' | 'weeks' | 'months';
+    scale: TimelineScale;
     enableColorCoding: boolean;
     onReschedule: (node: RoadmapNode, startDate: string, dueDate: string) => Promise<void>;
     onSchedule: (node: RoadmapNode, startDate: string, dueDate: string) => Promise<void>;
@@ -87,9 +93,8 @@
       .sort(compareDatedNodes),
   );
   let hierarchyNodes = $derived([...nodes].sort(compareDatedNodes));
-  let minimumDayCount = $derived(scale === 'days' ? 14 : scale === 'weeks' ? 84 : 365);
   let domainNodes = $derived(datedNodes.map(expandNodeForBufferedDomain));
-  let timelineDomain = $derived(createTimelineDomain(domainNodes, minimumDayCount));
+  let timelineDomain = $derived(createTimelineDomainForScale(domainNodes, scale));
   let timelineStart = $derived(timelineDomain.startDate);
   let dayCount = $derived(timelineDomain.dayCount);
   let dayLabels = $derived(
@@ -100,11 +105,10 @@
   let rowCount = $derived(Math.max(ganttRows.length, EMPTY_ROW_COUNT));
   let rowNumbers = $derived(Array.from({ length: rowCount }, (_, index) => index + 1));
   let timelineNodes = $derived(buildTimelineNodes(ganttRows, timelineStart));
-  let todayIndex = $derived(daysBetween(timelineStart, todayDate()));
-  let todayColumn = $derived(todayIndex + 1);
-  let isTodayVisible = $derived(todayIndex >= 0 && todayIndex < dayCount);
+  let localToday = $derived(todayDate());
+  let todayPosition = $derived(timelineDatePositionPercent(localToday, timelineDomain));
   let overviewItems = $derived(
-    buildTimelineOverview(datedNodes, timelineDomain, overviewBucketCount(scale)),
+    buildTimelineOverview(datedNodes, timelineDomain, timelineOverviewBucketCount(scale), localToday),
   );
 
   let timelineBody = $state<HTMLDivElement>();
@@ -275,7 +279,7 @@
 
   function buildHeaderSegments(
     dates: readonly string[],
-    timelineScale: 'days' | 'weeks' | 'months',
+    timelineScale: TimelineScale,
   ): HeaderSegment[] {
     if (timelineScale === 'days') {
       return dates.map((date, index) => ({
@@ -325,23 +329,14 @@
     );
   }
 
-  function getDayWidth(timelineScale: 'days' | 'weeks' | 'months'): string {
-    if (timelineScale === 'weeks') return '15px';
-    if (timelineScale === 'months') return '4px';
-    return 'clamp(4.5rem, 7vw, 6rem)';
-  }
-
-  function overviewBucketCount(timelineScale: 'days' | 'weeks' | 'months'): number {
-    return timelineScale === 'days' ? 48 : timelineScale === 'weeks' ? 32 : 18;
-  }
-
-  function collapsedBucketCount(timelineScale: 'days' | 'weeks' | 'months'): number {
-    return timelineScale === 'days' ? 36 : timelineScale === 'weeks' ? 20 : 12;
-  }
-
   function collapsedOverviewItems(row: GanttRow): TimelineOverviewItem[] {
     return row.collapsed
-      ? buildTimelineOverview(row.nodes, timelineDomain, collapsedBucketCount(scale))
+      ? buildTimelineOverview(
+          row.nodes,
+          timelineDomain,
+          collapsedTimelineBucketCount(scale),
+          localToday,
+        )
       : [];
   }
 
@@ -367,6 +362,10 @@
   function isWeekend(date: string): boolean {
     const day = new Date(`${date}T00:00:00Z`).getUTCDay();
     return day === 0 || day === 6;
+  }
+
+  function isMonthStart(date: string): boolean {
+    return date.endsWith('-01');
   }
 
   function dateFromPointer(event: PointerEvent | DragEvent): string | null {
@@ -539,6 +538,7 @@
       `Subject: ${formatEntityLabel(node.subject, UNASSIGNED_SUBJECT)}`,
       node.project === undefined ? '' : `Project: ${formatEntityLabel(node.project, node.project)}`,
       `Status: ${node.status}`,
+      `Priority: ${node.priority.charAt(0).toUpperCase()}${node.priority.slice(1)}`,
       dates,
       isNodeOverdue(node) ? 'Overdue' : '',
       node.hardDependency ? 'Fixed date' : '',
@@ -570,7 +570,7 @@
 
 <section class="gantt" aria-label="Gantt timeline">
   <div class="gantt-scroll">
-    <div class="gantt-shell" style={`--gantt-day-width: ${getDayWidth(scale)}`}>
+    <div class={`gantt-shell scale-${scale}`} style={`--gantt-day-width: ${timelineScaleDayWidth(scale)}`}>
       <aside class="task-rail" aria-label="Scheduled task list">
         <div class="overview-rail">
           <strong>Overview</strong>
@@ -702,6 +702,7 @@
             <div
               class="day-track"
               class:weekend={isWeekend(date)}
+              class:month-start={isMonthStart(date)}
               style={`grid-column: ${index + 1}; grid-row: 1 / -1`}
               title={date}
             ></div>
@@ -750,6 +751,7 @@
           {/each}
 
           {#each timelineNodes as item (item.node.id)}
+            {@const presentation = ganttBarPresentation(item.node.status, item.node.priority)}
             <div
               role="button"
               tabindex="0"
@@ -762,7 +764,7 @@
               class:overdue={isNodeOverdue(item.node)}
               class:hard-dependency={item.node.hardDependency}
               class:dragging={draggedNode?.id === item.node.id}
-              class={`status-${item.node.status}`}
+              class={presentation.statusClass}
               style={`grid-column: ${item.startColumn} / span ${item.spanColumns}; grid-row: ${item.row}`}
               title={nodeTooltip(item.node)}
               aria-label={`Open or reschedule ${formatNodeTitle(item.node)}`}
@@ -771,6 +773,12 @@
               onkeydown={(event) => onTimelineKeyDown(event, item.node)}
             >
               {#if !item.marker}
+                {#if presentation.priorityMarker !== null}
+                  <span
+                    class="priority-indicator"
+                    aria-label={presentation.priorityMarker.label}
+                  >{presentation.priorityMarker.symbol}</span>
+                {/if}
                 <span class="pill-title">{formatNodeTitle(item.node)}</span>
               {/if}
               {#if isNodeOverdue(item.node)}
@@ -787,12 +795,13 @@
           {/if}
         </div>
 
-        {#if isTodayVisible}
+        {#if todayPosition !== null}
           <div
             class="today-line"
-            style={`grid-column: ${todayColumn}`}
-            title={`Today · ${todayDate()}`}
-            aria-hidden="true"
+            style={`--today-position: ${todayPosition}%`}
+            title={`Today · ${localToday}`}
+            role="img"
+            aria-label={`Today · ${localToday}`}
           ></div>
         {/if}
       </div>
@@ -822,6 +831,18 @@
     grid-template-columns: clamp(13rem, 25vw, 22rem) minmax(100%, max-content);
     width: max-content;
     min-width: 100%;
+  }
+
+  .gantt-shell.scale-fit {
+    grid-template-columns: clamp(13rem, 25vw, 22rem) minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .gantt-shell.scale-fit .timeline-panel,
+  .gantt-shell.scale-fit .day-header,
+  .gantt-shell.scale-fit .timeline-grid {
+    width: 100%;
+    min-width: 0;
   }
 
   .task-rail {
@@ -1087,15 +1108,19 @@
     opacity: var(--dimmed);
   }
 
+  .day-track.month-start {
+    border-left: calc(var(--border-width) * 2) solid var(--background-modifier-border-focus);
+  }
+
   .today-line {
-    position: relative;
-    z-index: 10;
-    grid-row: 1 / 4;
-    justify-self: start;
+    position: absolute;
+    inset: 0 auto 0 var(--today-position);
+    z-index: 7;
     width: calc(var(--border-width) * 2);
+    transform: translateX(-50%);
     background: var(--interactive-accent);
     box-shadow: 0 0 var(--size-2-2) var(--interactive-accent);
-    opacity: 0.75;
+    opacity: 0.8;
     pointer-events: none;
   }
 
@@ -1245,6 +1270,17 @@
     white-space: nowrap;
   }
 
+  .priority-indicator {
+    display: inline-grid;
+    flex: 0 0 auto;
+    place-items: center;
+    color: currentColor;
+    font-size: var(--font-ui-smaller);
+    font-weight: var(--font-bold);
+    line-height: 1;
+    opacity: 0.85;
+  }
+
   .color-coded.status-todo {
     background-color: var(--status-todo);
     color: var(--text-on-accent);
@@ -1307,6 +1343,10 @@
   @media (max-width: 64rem) {
     .gantt-shell {
       grid-template-columns: minmax(11rem, 22vw) minmax(100%, max-content);
+    }
+
+    .gantt-shell.scale-fit {
+      grid-template-columns: minmax(11rem, 22vw) minmax(0, 1fr);
     }
 
     .scratchpad-action {

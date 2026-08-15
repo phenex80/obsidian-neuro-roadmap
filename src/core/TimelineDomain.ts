@@ -1,6 +1,15 @@
 import type { NodeStatus, RoadmapNode } from '../types';
 
 export const MILLISECONDS_PER_DAY = 86_400_000;
+export const TIMELINE_SCALES = ['days', 'weeks', 'months', 'semester', 'fit'] as const;
+export type TimelineScale = (typeof TIMELINE_SCALES)[number];
+
+const TIMELINE_MINIMUM_DAY_COUNTS: Readonly<Record<Exclude<TimelineScale, 'fit'>, number>> = {
+  days: 14,
+  weeks: 84,
+  months: 92,
+  semester: 154,
+};
 
 export interface TimelineDomain {
   readonly startDate: string;
@@ -47,6 +56,71 @@ export function createTimelineDomain(
     endDate: addDays(startDate, dayCount - 1),
     dayCount,
   };
+}
+
+export function createTimelineDomainForScale(
+  nodes: readonly RoadmapNode[],
+  scale: TimelineScale,
+  fallbackStart = todayDate(),
+): TimelineDomain {
+  return scale === 'fit'
+    ? createFitTimelineDomain(nodes, 7, fallbackStart)
+    : createTimelineDomain(nodes, timelineMinimumDayCount(scale), fallbackStart);
+}
+
+export function createFitTimelineDomain(
+  nodes: readonly RoadmapNode[],
+  paddingDays = 7,
+  fallbackStart = todayDate(),
+): TimelineDomain {
+  const dated = nodes
+    .flatMap((node) => [validDate(node.startDate), validDate(node.dueDate)])
+    .filter((date): date is string => date !== null)
+    .sort();
+  const safePadding = Math.max(0, Math.floor(paddingDays));
+  if (dated.length === 0) {
+    const startDate = addDays(fallbackStart, -14);
+    return {
+      startDate,
+      endDate: addDays(startDate, 27),
+      dayCount: 28,
+    };
+  }
+  const startDate = addDays(dated[0] ?? fallbackStart, -safePadding);
+  const endDate = addDays(dated.at(-1) ?? fallbackStart, safePadding);
+  return {
+    startDate,
+    endDate,
+    dayCount: daysBetween(startDate, endDate) + 1,
+  };
+}
+
+export function timelineMinimumDayCount(scale: Exclude<TimelineScale, 'fit'>): number {
+  return TIMELINE_MINIMUM_DAY_COUNTS[scale];
+}
+
+export function timelineScaleDayWidth(scale: TimelineScale): string {
+  if (scale === 'weeks') return '0.9375rem';
+  if (scale === 'months') return '0.5rem';
+  if (scale === 'semester') return '0.25rem';
+  if (scale === 'fit') return '0rem';
+  return 'clamp(4.5rem, 7vw, 6rem)';
+}
+
+export function timelineOverviewBucketCount(scale: TimelineScale): number {
+  if (scale === 'days') return 48;
+  if (scale === 'weeks') return 32;
+  if (scale === 'months') return 24;
+  if (scale === 'semester') return 18;
+  return 16;
+}
+
+export function collapsedTimelineBucketCount(scale: TimelineScale): number {
+  if (scale === 'days') return 36;
+  if (scale === 'weeks') return 20;
+  if (scale === 'months') return 16;
+  if (scale === 'semester') return 12;
+  return 10;
 }
 
 export function createTimelineVisualItem(

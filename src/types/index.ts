@@ -116,9 +116,9 @@ export const semanticValueMappingSchema = z.object({
     .string()
     .default('done, completed, complete, hotový, hotovy, hotové, hotove, ukončený, ukonceny, finished, closed'),
   statusUnscheduled: z.string().default('unscheduled, inbox, backlog, neplánované, neplanovane'),
-  priorityHigh: z.string().default('high, urgent, vysoká, vysoka, kritická, kriticka'),
+  priorityHigh: z.string().default('high, highest, urgent, vysoká, vysoka, kritická, kriticka'),
   priorityMedium: z.string().default('medium, normal, stredná, stredna'),
-  priorityLow: z.string().default('low, nízka, nizka, someday'),
+  priorityLow: z.string().default('low, lowest, nízka, nizka, someday'),
   typeRoadmap: z.string().default('roadmap, roadmapa'),
   typeProject: z.string().default('project, projekt, workstream'),
   typeMilestone: z.string().default('milestone, míľnik, milnik'),

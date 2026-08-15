@@ -104,7 +104,14 @@ export function mapStatus(value: unknown, mapping: SemanticValueMap): NodeStatus
 }
 
 export function mapPriority(value: unknown, mapping: SemanticValueMap): Priority | undefined {
-  return mapSemanticEnum(value, PRIORITIES, mapping.priority);
+  const mapped = mapSemanticEnum(value, PRIORITIES, mapping.priority);
+  if (mapped !== undefined) return mapped;
+  const normalized = readValueStrings(value)[0];
+  if (normalized === undefined) return undefined;
+  const builtInAlias = normalizeSemanticValue(normalized);
+  if (builtInAlias === 'highest') return 'high';
+  if (builtInAlias === 'lowest') return 'low';
+  return undefined;
 }
 
 export function mapNodeType(value: unknown, mapping: SemanticValueMap): NodeType | undefined {

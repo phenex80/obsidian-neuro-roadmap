@@ -22,10 +22,21 @@ import {
 } from '../src/types';
 import { replaceTaskCheckbox } from '../src/core/MarkdownTask';
 import {
+  addDays,
   buildTimelineOverview,
+  createFitTimelineDomain,
   createTimelineDomain,
+  createTimelineDomainForScale,
+  createTimelineVisualItem,
+  daysBetween,
   isNodeOverdue,
+  timelineDatePositionPercent,
+  timelineMinimumDayCount,
+  timelineScaleDayWidth,
+  todayDate,
+  type TimelineScale,
 } from '../src/core/TimelineDomain';
+import { ganttBarPresentation, ganttPriorityMarker } from '../src/core/GanttPresentation';
 import type { RoadmapNode } from '../src/types';
 import { DependencyEngine } from '../src/core/DependencyEngine';
 import { RoadmapIndexer } from '../src/core/Indexer';
@@ -117,6 +128,8 @@ test('semantic status and priority values normalize aliases and diacritics', () 
   assert.equal(mapStatus('hotové', values), 'done');
   assert.equal(mapStatus('AKTÍVNY', values), 'in-progress');
   assert.equal(mapPriority('vysoká', values), 'high');
+  assert.equal(mapPriority('highest', values), 'high');
+  assert.equal(mapPriority('lowest', values), 'low');
   assert.equal(mapCalendarSemanticType('skúška', values), 'exam');
   assert.equal(mapCalendarSemanticType('prezentácia', values), 'presentation');
 });
@@ -1562,6 +1575,92 @@ test('overview density stays bounded for 5, 50, and 200 tasks', () => {
     assert.ok(overview.length <= 24);
     assert.equal(overview.flatMap((item) => item.nodes).length, count);
   }
+});
+
+test('Gantt priority markers stay independent from status color classes', () => {
+  assert.equal(ganttPriorityMarker('high')?.label, 'High priority');
+  assert.equal(ganttPriorityMarker('highest')?.label, 'Highest priority');
+  assert.equal(ganttPriorityMarker('medium'), null);
+  assert.equal(ganttPriorityMarker('low'), null);
+
+  assert.equal(ganttBarPresentation('todo', 'high').statusClass, 'status-todo');
+  assert.equal(ganttBarPresentation('in-progress', 'high').statusClass, 'status-in-progress');
+  assert.equal(ganttBarPresentation('done', 'high').statusClass, 'status-done');
+  assert.equal(
+    ganttBarPresentation('in-progress', 'medium').statusClass,
+    ganttBarPresentation('in-progress', 'high').statusClass,
+  );
+});
+
+test('Today uses the local calendar date and stable date-only coordinates across zoom levels', () => {
+  const localLateEvening = new Date(2026, 8, 10, 23, 45);
+  assert.equal(todayDate(localLateEvening), '2026-09-10');
+
+  const nodes = [
+    createNode('semester-range', { startDate: '2026-08-20', dueDate: '2027-01-20' }),
+  ];
+  const scales: readonly TimelineScale[] = ['days', 'weeks', 'months', 'semester', 'fit'];
+  for (const scale of scales) {
+    const domain = createTimelineDomainForScale(nodes, scale, '2026-09-10');
+    const position = timelineDatePositionPercent('2026-09-10', domain);
+    assert.notEqual(position, null);
+    assert.equal(
+      position,
+      ((daysBetween(domain.startDate, '2026-09-10') + 0.5) / domain.dayCount) * 100,
+    );
+    assert.equal(
+      timelineDatePositionPercent(addDays(domain.startDate, domain.dayCount), domain),
+      null,
+    );
+  }
+});
+
+test('Gantt zoom presets provide month, semester, and fit domains without date drift', () => {
+  const singleDate = [createNode('single', { dueDate: '2026-09-10' })];
+  const months = createTimelineDomainForScale(singleDate, 'months', '2026-09-10');
+  const semester = createTimelineDomainForScale(singleDate, 'semester', '2026-09-10');
+
+  assert.equal(months.dayCount, timelineMinimumDayCount('months'));
+  assert.ok(months.dayCount > 31 && months.dayCount <= 100);
+  assert.equal(semester.dayCount, timelineMinimumDayCount('semester'));
+  assert.ok(semester.dayCount >= 140 && semester.dayCount <= 160);
+  assert.equal(timelineScaleDayWidth('months'), '0.5rem');
+  assert.equal(timelineScaleDayWidth('semester'), '0.25rem');
+  assert.equal(timelineScaleDayWidth('fit'), '0rem');
+
+  const dated = [
+    createNode('range', { startDate: '2026-09-01', dueDate: '2026-09-10' }),
+    createNode('due-only', { dueDate: '2026-10-05' }),
+    createNode('milestone', { type: 'milestone', dueDate: '2026-08-20' }),
+  ];
+  const unscheduled = createNode('unscheduled');
+  const fit = createTimelineDomainForScale([...dated, unscheduled], 'fit', '2026-09-10');
+  const fitWithoutUnscheduled = createFitTimelineDomain(dated, 7, '2026-09-10');
+
+  assert.deepEqual(fit, fitWithoutUnscheduled);
+  assert.equal(fit.startDate, '2026-08-13');
+  assert.equal(fit.endDate, '2026-10-12');
+  for (const node of dated) {
+    const visual = createTimelineVisualItem(node, fit);
+    assert.notEqual(visual, null);
+    assert.ok((visual?.leftPercent ?? -1) >= 0);
+    assert.ok((visual?.centerPercent ?? 101) <= 100);
+  }
+
+  const overview = buildTimelineOverview(dated, fit, fit.dayCount, '2026-09-10');
+  assert.equal(overview.flatMap((item) => item.nodes).length, dated.length);
+  for (const item of overview.filter((candidate) => candidate.kind !== 'cluster')) {
+    const node = item.nodes[0];
+    assert.notEqual(node, undefined);
+    if (node === undefined) continue;
+    const visual = createTimelineVisualItem(node, fit);
+    assert.equal(item.leftPercent, visual?.kind === 'marker' ? visual.centerPercent : visual?.leftPercent);
+  }
+
+  const emptyFit = createFitTimelineDomain([], 7, '2026-09-10');
+  assert.equal(emptyFit.dayCount, 28);
+  assert.equal(emptyFit.startDate, '2026-08-27');
+  assert.equal(emptyFit.endDate, '2026-09-23');
 });
 
 test('compact timeline preserves scheduled distribution without positioning unscheduled items', () => {

@@ -14,6 +14,7 @@
     CalendarSyncRuntimeStatus,
   } from '../../core/CalendarSyncController';
   import type { CalendarSyncReport } from '../../core/CalendarSyncEngine';
+  import { TIMELINE_SCALES, type TimelineScale } from '../../core/TimelineDomain';
   import DashboardView from '../components/DashboardView.svelte';
   import GanttCanvas from '../components/GanttCanvas.svelte';
   import HorizonBoard from '../components/HorizonBoard.svelte';
@@ -61,13 +62,12 @@
   let selectedSubjects = $state<string[]>([]);
   let priority = $state<'all' | 'high' | 'medium' | 'low'>('all');
   let viewMode = $state<'dashboard' | 'gantt' | 'horizon'>('dashboard');
-  let scale = $state<'days' | 'weeks' | 'months'>('days');
+  let scale = $state<TimelineScale>('days');
   let scratchpadNode = $state<RoadmapNode | null>(null);
   let circularDependencyCycles = $state<readonly (readonly string[])[]>([]);
   let exportingCalendar = $state(false);
   let calendarSyncStatus = $state<CalendarSyncRuntimeStatus>({ phase: 'idle' });
   const PRIORITY_FILTERS = ['all', 'high', 'medium', 'low'] as const;
-  const TIMELINE_SCALES = ['days', 'weeks', 'months'] as const;
 
   let semesters = $derived(
     Array.from(
