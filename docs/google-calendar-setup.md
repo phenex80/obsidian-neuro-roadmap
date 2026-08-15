@@ -43,7 +43,7 @@ The browser callback displays only a success message and closes its one-shot ser
 2. Select **Connect**, open the Google sign-in link, and approve the requested permissions.
 3. Confirm the **Connected as…** account label.
 4. Select **Refresh list**, then choose an existing writable calendar; or select **Create and select** to explicitly create `Neuro Roadmap`.
-5. Use **Sync now** for a full remote verification. Automatic sync debounces later roadmap changes.
+5. Use **Sync now** to fully reassert the Markdown projection. Normal roadmap changes synchronize automatically after a three-second debounce.
 
 The plugin never creates a calendar merely because an account was connected. Read-only calendars are excluded from the selection list.
 
@@ -61,8 +61,13 @@ The plugin never creates a calendar merely because an account was connected. Rea
 - Eligible Markdown item with no Google mapping → create a managed event.
 - Changed title, deadline, description, status, or reminder → update the same event.
 - Explicit calendar exclusion or deleted source item → delete only its mapped managed event.
-- Externally deleted managed event → recreate it during **Sync now** or startup verification.
+- Normal changes use FAST reconciliation: unchanged projection hashes do not cause remote reads or writes.
+- The configurable safety interval (15 minutes by default) verifies that unchanged managed events still exist; deleted events are recreated without unconditional PUT requests.
+- **Sync now** performs FULL reconciliation and reasserts Markdown-defined content even when the local projection hash is unchanged.
+- Externally deleted managed event → recreate it during periodic existence verification or **Sync now**.
 - Changed target calendar → remove managed Google events from the previous calendar before switching. If cleanup fails, the selection remains unchanged.
+- Startup schedules one non-blocking FAST reconciliation after the Markdown index is consistent. A persisted dirty flag carries interrupted pending work into the next session.
+- Shutdown makes a best-effort non-blocking FAST flush; network completion is not assumed or required for application exit.
 - Restarting Obsidian preserves stable item/calendar/event mappings in plugin state and the refresh token in SecretStorage.
 - Offline, timeout, authentication, permission, quota, and server errors never modify or delete Markdown.
 

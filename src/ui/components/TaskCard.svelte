@@ -1,6 +1,7 @@
 <script lang="ts">
   import { formatEntityLabel, formatNodeTitle, isNodeOverdue } from '../../core/TimelineDomain';
   import type { CalendarItemOverride, RoadmapNode } from '../../types';
+  import CalendarActionButton from './CalendarActionButton.svelte';
 
   let {
     node,
@@ -42,14 +43,6 @@
     }
   }
 
-  function calendarActionLabel(): string {
-    if (!calendarAvailable) return 'Add a date before using Calendar';
-    if (calendarOverride === 'include') return 'Included by override · Use automatic calendar policy';
-    if (calendarOverride === 'exclude') return 'Excluded by override · Use automatic calendar policy';
-    return calendarIncluded
-      ? 'Synced to calendar · Exclude from calendar'
-      : 'Add to calendar';
-  }
 </script>
 
 <article
@@ -87,17 +80,13 @@
       aria-label={`Quick note for ${formatNodeTitle(node)}`}
       onclick={() => onEdit(node)}
     >✎</button>
-    <button
-      type="button"
-      class="card-action calendar-action"
-      class:included={calendarIncluded}
-      class:excluded={calendarOverride === 'exclude'}
-      title={calendarActionLabel()}
-      aria-label={`${calendarActionLabel()}: ${formatNodeTitle(node)}`}
-      aria-pressed={calendarIncluded}
-      disabled={!calendarAvailable}
-      onclick={() => void onToggleCalendar(node)}
-    >{calendarOverride === 'exclude' ? '⊘' : calendarIncluded ? '◉' : '○'}</button>
+    <CalendarActionButton
+      itemLabel={formatNodeTitle(node)}
+      included={calendarIncluded}
+      override={calendarOverride}
+      available={calendarAvailable}
+      onToggle={() => onToggleCalendar(node)}
+    />
   </div>
 
   <p class="context-line">
@@ -224,14 +213,6 @@
   .card-action:hover,
   .card-action:focus-visible {
     color: var(--interactive-accent);
-  }
-
-  .calendar-action.included {
-    color: var(--interactive-accent);
-  }
-
-  .calendar-action.excluded {
-    color: var(--text-faint);
   }
 
   .context-line {

@@ -11,7 +11,12 @@ import {
   mapCalendarSemanticType,
   readMappedValue,
 } from '../src/core/SemanticMapping';
-import { propertyMappingSchema, semanticValueMappingSchema } from '../src/types';
+import {
+  CALENDAR_POLICY_VERSION,
+  RECOMMENDED_CALENDAR_POLICY,
+  propertyMappingSchema,
+  semanticValueMappingSchema,
+} from '../src/types';
 import { replaceTaskCheckbox } from '../src/core/MarkdownTask';
 import {
   buildTimelineOverview,
@@ -21,7 +26,11 @@ import {
 import type { RoadmapNode } from '../src/types';
 import { DependencyEngine } from '../src/core/DependencyEngine';
 import { RoadmapIndexer } from '../src/core/Indexer';
-import { isCalendarEligible, projectCalendarEvent } from '../src/core/CalendarCore';
+import {
+  deriveCalendarTemporalProjection,
+  isCalendarEligible,
+  projectCalendarEvent,
+} from '../src/core/CalendarCore';
 import { CalendarIdentityManager, calendarItemLocator } from '../src/core/CalendarIdentity';
 import { exportCalendarEventsToICS, IcsCalendarProvider } from '../src/calendar/IcsCalendarProvider';
 import type { CalendarEventProjection } from '../src/core/CalendarCore';
@@ -55,10 +64,16 @@ import type {
   ExternalCalendarEventRef,
 } from '../src/core/CalendarProvider';
 import { CalendarSyncEngine } from '../src/core/CalendarSyncEngine';
-import { CalendarSyncController } from '../src/core/CalendarSyncController';
+import {
+  CALENDAR_SYNC_DEBOUNCE_MS,
+  CalendarSyncController,
+} from '../src/core/CalendarSyncController';
 import { buildSubjectSummaries } from '../src/core/DashboardMetrics';
 import { classifyHorizon, formatRelativeTaskDate } from '../src/core/HorizonPlanner';
-import { migrateRoadmapSettingsData } from '../src/core/SettingsMigration';
+import {
+  migrateRoadmapSettingsData,
+  needsCalendarPolicyMigration,
+} from '../src/core/SettingsMigration';
 import { roadmapSettingsSchema } from '../src/types';
 import {
   compileSourceScope,
@@ -91,9 +106,12 @@ test('semantic status and priority values normalize aliases and diacritics', () 
 test('calendar policy includes meaningful dates and excludes regular tasks by default', () => {
   const options = createCalendarOptions();
   assert.equal(isCalendarEligible(createNode('exam', { calendarType: 'exam', dueDate: '2026-10-10' }), options), true);
+  assert.equal(isCalendarEligible(createNode('assignment', { calendarType: 'assignment-deadline', dueDate: '2026-10-10' }), options), true);
   assert.equal(isCalendarEligible(createNode('milestone', { calendarType: 'milestone', dueDate: '2026-10-11' }), options), true);
   assert.equal(isCalendarEligible(createNode('project', { calendarType: 'project-deadline', dueDate: '2026-10-12' }), options), true);
+  assert.equal(isCalendarEligible(createNode('presentation', { calendarType: 'presentation', dueDate: '2026-10-12' }), options), true);
   assert.equal(isCalendarEligible(createNode('task', { calendarType: 'regular-task', dueDate: '2026-10-13' }), options), false);
+  assert.deepEqual(options.automaticallyInclude, RECOMMENDED_CALENDAR_POLICY);
 });
 
 test('calendar item overrides take precedence over global policy', () => {
@@ -101,6 +119,27 @@ test('calendar item overrides take precedence over global policy', () => {
   const milestone = createNode('milestone', { calendarType: 'milestone', dueDate: '2026-10-14' });
   assert.equal(isCalendarEligible(regularTask, { ...createCalendarOptions(), override: 'include' }), true);
   assert.equal(isCalendarEligible(milestone, { ...createCalendarOptions(), override: 'exclude' }), false);
+  assert.equal(isCalendarEligible(regularTask, createCalendarOptions()), false);
+  assert.equal(isCalendarEligible(milestone, createCalendarOptions()), true);
+  const toggledOptions = createCalendarOptions();
+  toggledOptions.automaticallyInclude['regular-task'] = true;
+  assert.equal(isCalendarEligible(regularTask, toggledOptions), true);
+});
+
+test('date-only temporal policy is all-day, free, and one day for every semantic type', () => {
+  const semanticTypes = Object.keys(RECOMMENDED_CALENDAR_POLICY) as (keyof typeof RECOMMENDED_CALENDAR_POLICY)[];
+  for (const calendarType of semanticTypes) {
+    const temporal = deriveCalendarTemporalProjection(createNode(calendarType, {
+      calendarType,
+      dueDate: '2026-10-10',
+    }));
+    assert.deepEqual(temporal, {
+      startDate: '2026-10-10',
+      endDateExclusive: '2026-10-11',
+      allDay: true,
+      availability: 'free',
+    });
+  }
 });
 
 test('calendar projection uses commitment date instead of the Gantt planning interval', () => {
@@ -236,12 +275,15 @@ test('calendar sync state remains plugin-managed and defaults empty', () => {
   assert.deepEqual(settings.calendarState.itemIdentities, {});
   assert.deepEqual(settings.calendarState.itemOverrides, {});
   assert.deepEqual(settings.calendarState.syncRecords, {});
+  assert.equal(settings.calendarState.calendarSyncDirty, false);
   assert.deepEqual(settings.calendarState.google, {});
+  assert.equal(settings.calendar.calendarPolicyVersion, CALENDAR_POLICY_VERSION);
+  assert.equal(settings.calendar.verificationIntervalMinutes, 15);
   assert.deepEqual(settings.calendar.google, {
     clientId: '',
     clientSecret: '',
     autoSync: true,
-    debounceMs: 2_000,
+    debounceMs: 3_000,
   });
 });
 
@@ -632,6 +674,8 @@ test('Google refresh, revocation, and revoked-grant errors preserve secure lifec
   assert.equal(refreshBody.get('refresh_token'), 'refresh-token');
   assert.equal(refreshBody.get('grant_type'), 'refresh_token');
   assert.match(transport.requests[1]?.body ?? '', /token=refresh-token/u);
+  assert.equal(transport.requests[1]?.url, 'https://oauth2.googleapis.com/revoke');
+  assert.equal(transport.requests.some((request) => request.url.includes('/calendar/v3/')), false);
 
   secrets.set('google-token', 'revoked-token');
   const revoked = new GoogleAuthClient(
@@ -669,6 +713,17 @@ test('Google provider maps Calendar Core all-day, free, reminder, and Unicode se
   assert.deepEqual(payload.reminders, {
     useDefault: false,
     overrides: [{ method: 'popup', minutes: 1440 }],
+  });
+});
+
+test('Google account profile falls back to email when optional profile name is absent', async () => {
+  const provider = createGoogleProvider(new QueueCalendarTransport([
+    jsonResponse(200, { sub: 'account-id', email: 'student@example.com' }),
+  ]));
+  assert.deepEqual(await provider.getAccountProfile(), {
+    id: 'account-id',
+    displayName: 'student@example.com',
+    email: 'student@example.com',
   });
 });
 
@@ -763,6 +818,10 @@ test('provider-neutral reconciliation creates, updates, and deletes the same man
   assert.equal(fixture.provider.created.length, 1);
   const originalReference = fixture.provider.created[0]?.reference;
 
+  const unchanged = await fixture.engine.reconcile([original], { mode: 'fast' });
+  assert.equal(unchanged.unchanged, 1);
+  assert.equal(fixture.provider.updated.length, 0);
+
   const changed = await fixture.engine.reconcile([{
     ...original,
     title: 'Renamed title',
@@ -777,7 +836,7 @@ test('provider-neutral reconciliation creates, updates, and deletes the same man
   assert.deepEqual(fixture.state.syncRecords, {});
 });
 
-test('provider-neutral reconciliation recreates externally deleted events without duplicates', async () => {
+test('existence verification recreates deleted events without updating unchanged events', async () => {
   const fixture = createSyncFixture();
   const node = createNode('milestone', {
     source: 'frontmatter',
@@ -785,12 +844,42 @@ test('provider-neutral reconciliation recreates externally deleted events withou
     dueDate: '2026-10-10',
   });
   await fixture.engine.reconcile([node]);
-  fixture.provider.missingOnNextUpdate = true;
+  const reference = fixture.provider.created[0]?.reference;
+  assert.ok(reference !== undefined);
 
-  const report = await fixture.engine.reconcile([node], { verifyRemote: true });
+  const existing = await fixture.engine.reconcile([node], { mode: 'verify-existence' });
+  assert.equal(existing.unchanged, 1);
+  assert.equal(fixture.provider.updated.length, 0);
+  assert.equal(fixture.provider.existenceChecks.length, 1);
+
+  const changedNode = { ...node, title: 'Changed locally' };
+  const changed = await fixture.engine.reconcile([changedNode], { mode: 'verify-existence' });
+  assert.equal(changed.updated, 1);
+  assert.equal(fixture.provider.updated.length, 1);
+  assert.equal(fixture.provider.existenceChecks.length, 1);
+
+  fixture.provider.deleteExternally(reference);
+
+  const report = await fixture.engine.reconcile([changedNode], { mode: 'verify-existence' });
   assert.equal(report.recreated, 1);
   assert.equal(fixture.provider.created.length, 2);
+  assert.equal(fixture.provider.updated.length, 1);
   assert.equal(Object.keys(fixture.state.syncRecords).length, 1);
+});
+
+test('full reconciliation reasserts an unchanged Markdown projection', async () => {
+  const fixture = createSyncFixture();
+  const node = createNode('exam', {
+    source: 'frontmatter',
+    calendarType: 'exam',
+    dueDate: '2026-10-10',
+  });
+  await fixture.engine.reconcile([node]);
+
+  const report = await fixture.engine.reconcile([node], { mode: 'full' });
+  assert.equal(report.updated, 1);
+  assert.equal(fixture.provider.updated.length, 1);
+  assert.equal(fixture.provider.existenceChecks.length, 0);
 });
 
 test('provider-neutral reconciliation scopes records by provider and honors explicit exclusion', async () => {
@@ -818,30 +907,161 @@ test('provider-neutral reconciliation scopes records by provider and honors expl
   assert.equal(Object.values(fixture.state.syncRecords).some((record) => record.provider === 'google'), false);
 });
 
-test('calendar sync controller debounces changes and serializes explicit sync', async () => {
-  const scheduled: (() => void)[] = [];
-  const runs: string[][] = [];
-  const controller = new CalendarSyncController(
-    async (nodes) => {
-      runs.push(nodes.map((node) => node.id));
-      return { created: 0, updated: 0, deleted: 0, recreated: 0, unchanged: 0, completedAt: '2026-08-15T00:00:00.000Z' };
+test('calendar sync controller debounces rapid changes and the latest snapshot wins', async () => {
+  const timers = new ManualTimers();
+  const runs: { ids: string[]; mode: string | undefined }[] = [];
+  let dirtyCalls = 0;
+  const controller = new CalendarSyncController({
+    reconcile: async (nodes, options) => {
+      runs.push({ ids: nodes.map((node) => node.id), mode: options.mode });
+      return emptySyncReport();
     },
-    () => 2_000,
-    async () => undefined,
-    async () => undefined,
-    (callback) => {
-      scheduled.push(callback);
-      return scheduled.length as ReturnType<typeof setTimeout>;
-    },
-    () => undefined,
-  );
+    onDirty: () => { dirtyCalls += 1; },
+    scheduleTimer: timers.schedule,
+    cancelTimer: timers.cancel,
+  });
   controller.schedule([createNode('first')]);
   controller.schedule([createNode('latest')]);
-  scheduled.at(-1)?.();
-  await controller.syncNow([createNode('manual')]);
+  assert.equal(dirtyCalls, 1);
+  assert.deepEqual(timers.activeDelays(), [CALENDAR_SYNC_DEBOUNCE_MS]);
+  timers.runNext();
+  await drainMicrotasks();
 
-  assert.deepEqual(runs, [['latest'], ['manual']]);
+  assert.deepEqual(runs, [{ ids: ['latest'], mode: 'fast' }]);
   controller.dispose();
+});
+
+test('calendar sync controller serializes work and recovers after an error', async () => {
+  let active = 0;
+  let maxActive = 0;
+  let rejectFirst = true;
+  const order: string[] = [];
+  const controller = new CalendarSyncController({
+    reconcile: async (nodes) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      const id = nodes[0]?.id ?? 'empty';
+      order.push(id);
+      await Promise.resolve();
+      active -= 1;
+      if (rejectFirst) {
+        rejectFirst = false;
+        throw new Error('transient failure');
+      }
+      return emptySyncReport();
+    },
+  });
+
+  const first = controller.syncStartup([createNode('first')]);
+  const second = controller.syncStartup([createNode('second')]);
+  await assert.rejects(first, /transient failure/u);
+  await second;
+  assert.equal(maxActive, 1);
+  assert.deepEqual(order, ['first', 'second']);
+  controller.dispose();
+});
+
+test('calendar sync dirty state clears only after success and shutdown flushes pending work', async () => {
+  const timers = new ManualTimers();
+  let dirty = false;
+  let shouldFail = true;
+  const modes: (string | undefined)[] = [];
+  const controller = new CalendarSyncController({
+    reconcile: async (_nodes, options) => {
+      modes.push(options.mode);
+      if (shouldFail) throw new Error('offline');
+      return emptySyncReport();
+    },
+    onDirty: () => { dirty = true; },
+    onSuccess: () => { dirty = false; },
+    scheduleTimer: timers.schedule,
+    cancelTimer: timers.cancel,
+  });
+
+  controller.schedule([createNode('failed')]);
+  assert.equal(dirty, true);
+  timers.runNext();
+  await drainMicrotasks();
+  assert.equal(dirty, true);
+
+  shouldFail = false;
+  controller.schedule([createNode('shutdown')]);
+  controller.dispose();
+  await drainMicrotasks();
+  assert.equal(dirty, false);
+  assert.deepEqual(modes, ['fast', 'fast']);
+});
+
+test('an older reconcile cannot clear dirty state for a newer pending snapshot', async () => {
+  const timers = new ManualTimers();
+  let dirty = true;
+  let releaseFirst: (() => void) | undefined;
+  const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  let runCount = 0;
+  const controller = new CalendarSyncController({
+    reconcile: async () => {
+      runCount += 1;
+      if (runCount === 1) await firstGate;
+      return emptySyncReport();
+    },
+    onDirty: () => { dirty = true; },
+    onSuccess: (_report, clearDirty) => {
+      if (clearDirty) dirty = false;
+    },
+    scheduleTimer: timers.schedule,
+    cancelTimer: timers.cancel,
+  });
+
+  const startup = controller.syncStartup([createNode('old')]);
+  await drainMicrotasks();
+  controller.schedule([createNode('new')]);
+  releaseFirst?.();
+  await startup;
+  assert.equal(dirty, true);
+
+  timers.runNext();
+  await drainMicrotasks();
+  assert.equal(dirty, false);
+  controller.dispose();
+});
+
+test('calendar sync startup and periodic verification use safe modes and dispose clears timers', async () => {
+  const timers = new ManualTimers();
+  let dirty = true;
+  const modes: (string | undefined)[] = [];
+  const controller = new CalendarSyncController({
+    reconcile: async (_nodes, options) => {
+      modes.push(options.mode);
+      return emptySyncReport();
+    },
+    onSuccess: () => { dirty = false; },
+    scheduleTimer: timers.schedule,
+    cancelTimer: timers.cancel,
+  });
+
+  await controller.syncStartup([createNode('startup')]);
+  assert.equal(dirty, false);
+  assert.deepEqual(modes, ['fast']);
+
+  controller.configureVerification(() => [createNode('periodic')], 0);
+  assert.deepEqual(timers.activeDelays(), []);
+  controller.configureVerification(() => [createNode('periodic')], 15);
+  assert.deepEqual(timers.activeDelays(), [15 * 60_000]);
+  timers.runNext();
+  await drainMicrotasks();
+  assert.deepEqual(modes, ['fast', 'verify-existence']);
+  assert.deepEqual(timers.activeDelays(), [15 * 60_000]);
+
+  controller.schedule([createNode('paused')]);
+  assert.deepEqual(
+    timers.activeDelays().sort((left, right) => left - right),
+    [CALENDAR_SYNC_DEBOUNCE_MS, 15 * 60_000],
+  );
+  controller.pauseAutomaticSync();
+  assert.deepEqual(timers.activeDelays(), []);
+
+  controller.dispose();
+  assert.deepEqual(timers.activeDelays(), []);
 });
 
 test('calendar export service distinguishes filtered selection from all eligible items', async () => {
@@ -1416,6 +1636,64 @@ test('legacy settings migrate roadmap anchors out of the template guard', () => 
   assert.deepEqual(migrated.sourceScopeRules, []);
 });
 
+test('calendar policy v2 migration applies recommended defaults once and preserves calendar state', () => {
+  const legacy = {
+    calendar: {
+      automaticallyInclude: {
+        exam: false,
+        'assignment-deadline': false,
+        'project-deadline': false,
+        milestone: false,
+        presentation: false,
+        'regular-task': true,
+      },
+      remindersEnabled: false,
+      reminderMinutes: { exam: 2_880 },
+      google: {
+        clientId: 'client-id',
+        clientSecret: 'client-secret',
+        autoSync: true,
+      },
+    },
+    calendarState: {
+      calendarSyncDirty: true,
+      itemOverrides: { item: 'include' },
+      syncRecords: {
+        'google:item': {
+          internalItemId: 'item',
+          provider: 'google',
+          externalCalendarId: 'calendar',
+          externalEventId: 'event',
+        },
+      },
+      google: {
+        refreshTokenSecretId: 'secret-id',
+        selectedCalendarId: 'calendar',
+        selectedCalendarName: 'Neuro Roadmap',
+      },
+    },
+  };
+
+  assert.equal(needsCalendarPolicyMigration(legacy), true);
+  const firstMigration = migrateRoadmapSettingsData(legacy);
+  const migrated = roadmapSettingsSchema.parse(firstMigration);
+  assert.equal(migrated.calendar.calendarPolicyVersion, CALENDAR_POLICY_VERSION);
+  assert.deepEqual(migrated.calendar.automaticallyInclude, RECOMMENDED_CALENDAR_POLICY);
+  assert.equal(migrated.calendar.remindersEnabled, false);
+  assert.equal(migrated.calendar.reminderMinutes.exam, 2_880);
+  assert.equal(migrated.calendar.google.clientId, 'client-id');
+  assert.equal(migrated.calendar.google.clientSecret, 'client-secret');
+  assert.equal(migrated.calendar.google.autoSync, true);
+  assert.deepEqual(migrated.calendarState.itemOverrides, { item: 'include' });
+  assert.equal(migrated.calendarState.calendarSyncDirty, true);
+  assert.ok(migrated.calendarState.syncRecords['google:item'] !== undefined);
+  assert.equal(migrated.calendarState.google.refreshTokenSecretId, 'secret-id');
+  assert.equal(migrated.calendarState.google.selectedCalendarId, 'calendar');
+
+  assert.equal(needsCalendarPolicyMigration(firstMigration), false);
+  assert.deepEqual(migrateRoadmapSettingsData(firstMigration), firstMigration);
+});
+
 function createRulesParser(
   rules: readonly { readonly property: string; readonly acceptedValues: string }[],
 ): RoadmapParser {
@@ -1595,7 +1873,8 @@ class MemoryCalendarProvider implements CalendarProvider {
   readonly created: { reference: ExternalCalendarEventRef; event: CalendarEventProjection }[] = [];
   readonly updated: { reference: ExternalCalendarEventRef; event: CalendarEventProjection }[] = [];
   readonly deleted: ExternalCalendarEventRef[] = [];
-  missingOnNextUpdate = false;
+  readonly existenceChecks: ExternalCalendarEventRef[] = [];
+  private readonly existingEventIds = new Set<string>();
   private sequence = 0;
 
   async initialize() {
@@ -1612,6 +1891,7 @@ class MemoryCalendarProvider implements CalendarProvider {
   ): Promise<ExternalCalendarEventRef> {
     const reference = { calendarId, eventId: `event-${++this.sequence}` };
     this.created.push({ reference, event });
+    this.existingEventIds.add(reference.eventId);
     return reference;
   }
 
@@ -1619,8 +1899,7 @@ class MemoryCalendarProvider implements CalendarProvider {
     reference: ExternalCalendarEventRef,
     event: CalendarEventProjection,
   ): Promise<void> {
-    if (this.missingOnNextUpdate) {
-      this.missingOnNextUpdate = false;
+    if (!this.existingEventIds.has(reference.eventId)) {
       throw { kind: 'not-found' };
     }
     this.updated.push({ reference, event });
@@ -1628,7 +1907,61 @@ class MemoryCalendarProvider implements CalendarProvider {
 
   async deleteEvent(reference: ExternalCalendarEventRef): Promise<void> {
     this.deleted.push(reference);
+    this.existingEventIds.delete(reference.eventId);
   }
+
+  async eventExists(reference: ExternalCalendarEventRef): Promise<boolean> {
+    this.existenceChecks.push(reference);
+    return this.existingEventIds.has(reference.eventId);
+  }
+
+  deleteExternally(reference: ExternalCalendarEventRef): void {
+    this.existingEventIds.delete(reference.eventId);
+  }
+}
+
+class ManualTimers {
+  private nextHandle = 1;
+  private readonly callbacks = new Map<number, { callback: () => void; milliseconds: number }>();
+
+  readonly schedule = (callback: () => void, milliseconds: number): ReturnType<typeof setTimeout> => {
+    const handle = this.nextHandle;
+    this.nextHandle += 1;
+    this.callbacks.set(handle, { callback, milliseconds });
+    return handle as ReturnType<typeof setTimeout>;
+  };
+
+  readonly cancel = (handle: ReturnType<typeof setTimeout>): void => {
+    this.callbacks.delete(handle as number);
+  };
+
+  activeDelays(): number[] {
+    return [...this.callbacks.values()].map(({ milliseconds }) => milliseconds);
+  }
+
+  runNext(): void {
+    const entry = this.callbacks.entries().next().value as
+      | readonly [number, { callback: () => void; milliseconds: number }]
+      | undefined;
+    if (entry === undefined) throw new Error('No scheduled timer is available.');
+    this.callbacks.delete(entry[0]);
+    entry[1].callback();
+  }
+}
+
+function emptySyncReport() {
+  return {
+    created: 0,
+    updated: 0,
+    deleted: 0,
+    recreated: 0,
+    unchanged: 0,
+    completedAt: '2026-08-15T00:00:00.000Z',
+  };
+}
+
+async function drainMicrotasks(): Promise<void> {
+  for (let index = 0; index < 8; index += 1) await Promise.resolve();
 }
 
 function createSyncFixture() {

@@ -1,7 +1,9 @@
 import { App, Modal, Platform, Plugin, PluginSettingTab, Setting, TFile } from 'obsidian';
 import {
+  CALENDAR_VERIFICATION_INTERVALS,
   CANONICAL_PROPERTY_FIELDS,
   PRIORITIES,
+  RECOMMENDED_CALENDAR_POLICY,
   SOURCE_SCOPE_MODES,
   propertyMappingSchema,
   roadmapSettingsSchema,
@@ -52,6 +54,7 @@ import {
 } from './core/CalendarSyncController';
 import {
   migrateRoadmapSettingsData,
+  needsCalendarPolicyMigration,
   withoutRoadmapTemplateValue,
 } from './core/SettingsMigration';
 import { GlobalItemView, VIEW_TYPE_NEURO_ROADMAP } from './ui/views/GlobalItemView';
@@ -94,7 +97,7 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     () => this.settings.calendarState.itemIdentities,
     async (itemIdentities) => {
       this.settings.calendarState.itemIdentities = itemIdentities;
-      await this.saveSettings();
+      await this.saveSettings(false, false);
     },
   );
   readonly calendarExporter = new CalendarExportService(
@@ -128,12 +131,12 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
       await this.saveSettings(false, false);
     },
   );
-  readonly googleSyncController = new CalendarSyncController(
-    (nodes, options) => this.googleSyncEngine.reconcile(nodes, options),
-    () => this.settings.calendar.google.debounceMs,
-    (report) => this.recordGoogleSyncSuccess(report),
-    (error) => this.recordGoogleSyncError(error),
-  );
+  readonly googleSyncController = new CalendarSyncController({
+    reconcile: (nodes, options) => this.googleSyncEngine.reconcile(nodes, options),
+    onDirty: () => this.markGoogleSyncDirty(),
+    onSuccess: (report, clearDirty) => this.recordGoogleSyncSuccess(report, clearDirty),
+    onError: (error) => this.recordGoogleSyncError(error),
+  });
   private readonly settingsListeners = new Set<SettingsListener>();
   private googleCalendars: readonly CalendarDescriptor[] = [];
   private activeGoogleAuthModal: GoogleAuthorizationModal | null = null;
@@ -146,14 +149,20 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     this.scheduler.setCreationPropertyKeys(parserOptions.propertyKeys);
     await this.indexer.initialize();
     this.indexer.registerEvents((eventRef) => this.registerEvent(eventRef));
+    let initialIndexEmission = true;
     const unsubscribeGoogleSync = this.indexer.subscribe((nodes) => {
+      if (initialIndexEmission) {
+        initialIndexEmission = false;
+        return;
+      }
       if (this.shouldAutoSyncGoogle()) {
         this.googleSyncController.schedule(nodes);
       }
     });
     this.register(unsubscribeGoogleSync);
+    this.configureGoogleVerification();
     if (this.shouldAutoSyncGoogle()) {
-      void this.googleSyncController.syncNow(this.indexer.getNodes()).catch(() => undefined);
+      void this.googleSyncController.syncStartup(this.indexer.getNodes()).catch(() => undefined);
     }
     this.registerEvent(
       this.app.vault.on('rename', (file, oldPath) => {
@@ -189,14 +198,18 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
 
   async loadSettings(): Promise<void> {
     const savedSettings: unknown = await this.loadData();
+    const persistCalendarMigration = needsCalendarPolicyMigration(savedSettings);
     const parsedSettings = roadmapSettingsSchema.safeParse(migrateRoadmapSettingsData(savedSettings));
     this.settings = parsedSettings.success ? parsedSettings.data : DEFAULT_SETTINGS;
     this.settings.excludedTemplateValues = withoutRoadmapTemplateValue(
       this.settings.excludedTemplateValues,
     );
+    if (persistCalendarMigration) {
+      await this.saveData(this.settings);
+    }
   }
 
-  async saveSettings(rebuildIndex = false, scheduleCalendarSync = true): Promise<void> {
+  async saveSettings(rebuildIndex = false, scheduleCalendarSync = false): Promise<void> {
     this.settings.excludedTemplateValues = withoutRoadmapTemplateValue(
       this.settings.excludedTemplateValues,
     );
@@ -211,6 +224,7 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     for (const listener of this.settingsListeners) {
       listener(this.settings);
     }
+    this.configureGoogleVerification();
     if (scheduleCalendarSync && this.shouldAutoSyncGoogle()) {
       this.googleSyncController.schedule(this.indexer.getNodes());
     }
@@ -244,7 +258,18 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
       itemOverrides[identity.internalItemId] = override;
     }
     this.settings.calendarState.itemOverrides = itemOverrides;
-    await this.saveSettings();
+    await this.saveSettings(false, true);
+  }
+
+  async resetCalendarItemOverrides(): Promise<void> {
+    if (Object.keys(this.settings.calendarState.itemOverrides).length === 0) return;
+    this.settings.calendarState.itemOverrides = {};
+    await this.saveSettings(false, true);
+  }
+
+  async useRecommendedCalendarPolicy(): Promise<void> {
+    this.settings.calendar.automaticallyInclude = { ...RECOMMENDED_CALENDAR_POLICY };
+    await this.saveSettings(false, true);
   }
 
   async exportCalendar(nodes: readonly RoadmapNode[]): Promise<CalendarExportResult> {
@@ -259,6 +284,10 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     listener: (status: CalendarSyncRuntimeStatus) => void,
   ): () => void {
     return this.googleSyncController.subscribe(listener);
+  }
+
+  getCalendarSyncStatus(): CalendarSyncRuntimeStatus {
+    return this.googleSyncController.getStatus();
   }
 
   isGoogleConnected(): boolean {
@@ -347,6 +376,7 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     try {
       await this.googleAuth.disconnect(this.getGoogleAuthConfiguration());
       this.googleCalendars = [];
+      delete this.settings.calendarState.google.lastSyncError;
       await this.saveSettings(false, false);
       return true;
     } catch (error) {
@@ -493,8 +523,29 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     );
   }
 
-  private async recordGoogleSyncSuccess(report: CalendarSyncReport): Promise<void> {
+  private configureGoogleVerification(): void {
+    if (!this.shouldAutoSyncGoogle()) {
+      this.googleSyncController.pauseAutomaticSync();
+      return;
+    }
+    this.googleSyncController.configureVerification(
+      () => this.indexer.getNodes(),
+      this.settings.calendar.verificationIntervalMinutes,
+    );
+  }
+
+  private async markGoogleSyncDirty(): Promise<void> {
+    if (this.settings.calendarState.calendarSyncDirty) return;
+    this.settings.calendarState.calendarSyncDirty = true;
+    await this.saveData(this.settings);
+  }
+
+  private async recordGoogleSyncSuccess(
+    report: CalendarSyncReport,
+    clearDirty: boolean,
+  ): Promise<void> {
     this.settings.calendarState.google.lastSyncAt = report.completedAt;
+    if (clearDirty) this.settings.calendarState.calendarSyncDirty = false;
     delete this.settings.calendarState.google.lastSyncError;
     await this.saveSettings(false, false);
   }
@@ -537,6 +588,8 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
 }
 
 class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
+  private unsubscribeCalendarSyncStatus: (() => void) | null = null;
+
   constructor(
     app: App,
     private readonly plugin: NeuroAdaptiveRoadmapPlugin,
@@ -545,6 +598,8 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
   }
 
   display(): void {
+    this.unsubscribeCalendarSyncStatus?.();
+    this.unsubscribeCalendarSyncStatus = null;
     const { containerEl } = this;
     containerEl.empty();
     containerEl.createEl('h2', { text: 'Neuro Roadmap settings' });
@@ -733,9 +788,9 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
       },
     );
 
-    containerEl.createEl('h3', { text: 'Calendar' });
+    containerEl.createEl('h3', { text: 'Automatically add to calendar' });
     containerEl.createEl('p', {
-      text: 'Calendar is a one-way projection of meaningful roadmap dates. Markdown remains the source of truth.',
+      text: 'Calendar is a one-way projection of meaningful roadmap dates. Markdown remains the source of truth. Hard academic dates are included by default; regular tasks are opt-in.',
       cls: 'setting-item-description',
     });
     for (const type of Object.keys(CALENDAR_TYPE_LABELS) as CalendarSemanticType[]) {
@@ -747,10 +802,40 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
             .setValue(this.plugin.settings.calendar.automaticallyInclude[type])
             .onChange(async (value) => {
               this.plugin.settings.calendar.automaticallyInclude[type] = value;
-              await this.plugin.saveSettings();
+              await this.plugin.saveSettings(false, true);
             }),
         );
     }
+
+    new Setting(containerEl)
+      .setName('Recommended hard-date defaults')
+      .setDesc('Include exams, assignment and project deadlines, milestones, and presentations. Keep regular tasks opt-in.')
+      .addButton((button) =>
+        button.setButtonText('Include all hard dates').onClick(async () => {
+          await this.plugin.useRecommendedCalendarPolicy();
+          this.display();
+        }),
+      );
+
+    const overrideCount = Object.keys(this.plugin.settings.calendarState.itemOverrides).length;
+    new Setting(containerEl)
+      .setName('Calendar item overrides')
+      .setDesc(overrideCount === 0
+        ? 'No manual item overrides. Items follow the automatic inclusion policy.'
+        : `${overrideCount} manual override${overrideCount === 1 ? '' : 's'} currently replace the automatic policy.`)
+      .addButton((button) =>
+        button
+          .setButtonText('Reset calendar item overrides')
+          .setWarning()
+          .setDisabled(overrideCount === 0)
+          .onClick(async () => {
+            if (!window.confirm('Remove all manual calendar item overrides and return to automatic inclusion?')) {
+              return;
+            }
+            await this.plugin.resetCalendarItemOverrides();
+            this.display();
+          }),
+      );
 
     new Setting(containerEl)
       .setName('Enable calendar reminders')
@@ -760,7 +845,7 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.calendar.remindersEnabled)
           .onChange(async (value) => {
             this.plugin.settings.calendar.remindersEnabled = value;
-            await this.plugin.saveSettings();
+            await this.plugin.saveSettings(false, true);
             this.display();
           }),
       );
@@ -921,7 +1006,7 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
             .onChange(async (value) => {
               this.plugin.settings.calendar.reminderMinutes[type] =
                 value === 'none' ? null : Number(value);
-              await this.plugin.saveSettings();
+              await this.plugin.saveSettings(false, true);
             });
         });
     }
@@ -1007,6 +1092,42 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
       );
     }
 
+    new Setting(containerEl)
+      .setName('Automatic synchronization')
+      .setDesc('Changes are synchronized automatically about three seconds after editing.')
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.calendar.google.autoSync)
+          .onChange(async (value) => {
+            this.plugin.settings.calendar.google.autoSync = value;
+            await this.plugin.saveSettings(false, true);
+            this.display();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Calendar verification interval')
+      .setDesc('Changes are normally synchronized automatically after editing. This interval periodically verifies the managed calendar as a safety check.')
+      .addDropdown((dropdown) => {
+        for (const interval of CALENDAR_VERIFICATION_INTERVALS) {
+          dropdown.addOption(
+            String(interval),
+            interval === 0 ? 'Off' : `${interval} min`,
+          );
+        }
+        dropdown
+          .setValue(String(this.plugin.settings.calendar.verificationIntervalMinutes))
+          .onChange(async (value) => {
+            const interval = CALENDAR_VERIFICATION_INTERVALS.find(
+              (candidate) => String(candidate) === value,
+            );
+            if (interval === undefined) return;
+            this.plugin.settings.calendar.verificationIntervalMinutes = interval;
+            await this.plugin.saveSettings(false, false);
+            this.display();
+          });
+      });
+
     if (!this.plugin.isGoogleConnected()) return;
 
     const calendars = this.plugin.getGoogleCalendars();
@@ -1048,29 +1169,19 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
         }),
       );
 
-    new Setting(containerEl)
-      .setName('Automatic synchronization')
-      .setDesc('Debounce roadmap changes and reconcile them without waiting for an Obsidian restart.')
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.calendar.google.autoSync)
-          .onChange(async (value) => {
-            this.plugin.settings.calendar.google.autoSync = value;
-            await this.plugin.saveSettings();
-          }),
-      );
-
     const lastSyncAt = this.plugin.settings.calendarState.google.lastSyncAt;
     const lastSyncError = this.plugin.settings.calendarState.google.lastSyncError;
     new Setting(containerEl)
-      .setName('Synchronization')
-      .setDesc(
-        lastSyncError !== undefined
-          ? `Sync error: ${lastSyncError}`
-          : lastSyncAt === undefined
-            ? 'Not synchronized yet.'
-            : `Last sync: ${formatTimestamp(lastSyncAt)}`,
-      )
+      .setName('Last successful sync')
+      .setDesc(lastSyncAt === undefined ? 'Not synchronized yet.' : formatTimestamp(lastSyncAt));
+
+    const statusSetting = new Setting(containerEl)
+      .setName('Status')
+      .setDesc(formatCalendarSyncStatus(
+        this.plugin.getCalendarSyncStatus(),
+        lastSyncAt,
+        lastSyncError,
+      ))
       .addButton((button) =>
         button
           .setButtonText('Sync now')
@@ -1084,6 +1195,19 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
             this.display();
           }),
       );
+    this.unsubscribeCalendarSyncStatus = this.plugin.subscribeCalendarSyncStatus((status) => {
+      statusSetting.setDesc(formatCalendarSyncStatus(
+        status,
+        this.plugin.settings.calendarState.google.lastSyncAt,
+        this.plugin.settings.calendarState.google.lastSyncError,
+      ));
+    });
+  }
+
+  hide(): void {
+    this.unsubscribeCalendarSyncStatus?.();
+    this.unsubscribeCalendarSyncStatus = null;
+    super.hide();
   }
 
   private addNumberSetting(
@@ -1296,4 +1420,16 @@ function isAuthenticationErrorMessage(value: string): boolean {
 function formatTimestamp(value: string): string {
   const timestamp = new Date(value);
   return Number.isNaN(timestamp.getTime()) ? value : timestamp.toLocaleString();
+}
+
+function formatCalendarSyncStatus(
+  status: CalendarSyncRuntimeStatus,
+  lastSyncAt: string | undefined,
+  lastSyncError?: string,
+): string {
+  if (status.phase === 'scheduled') return 'Waiting to sync…';
+  if (status.phase === 'syncing') return 'Syncing…';
+  if (status.phase === 'error') return `Error: ${status.message ?? 'Calendar synchronization failed.'}`;
+  if (lastSyncError !== undefined) return `Error: ${lastSyncError}`;
+  return lastSyncAt === undefined ? 'Waiting for first synchronization.' : 'Up to date';
 }

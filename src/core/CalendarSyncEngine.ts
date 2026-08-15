@@ -16,8 +16,10 @@ export interface CalendarSyncContext {
   readonly vaultName?: string;
 }
 
+export type CalendarReconcileMode = 'fast' | 'verify-existence' | 'full';
+
 export interface CalendarReconcileOptions {
-  readonly verifyRemote?: boolean;
+  readonly mode?: CalendarReconcileMode;
 }
 
 export interface CalendarSyncReport {
@@ -46,6 +48,7 @@ export class CalendarSyncEngine {
     options: CalendarReconcileOptions = {},
   ): Promise<CalendarSyncReport> {
     validateProvider(this.provider);
+    const mode = options.mode ?? 'fast';
     const initialContext = this.getContext();
     if (initialContext.calendarId.length === 0) {
       throw new Error(`Select a ${this.provider.displayName} calendar before synchronization.`);
@@ -90,7 +93,7 @@ export class CalendarSyncEngine {
         continue;
       }
 
-      if (record.lastSyncedHash !== hash || options.verifyRemote === true) {
+      if (record.lastSyncedHash !== hash || mode === 'full') {
         try {
           await this.provider.updateEvent?.(reference, event);
           await this.storeRecord(reference, event, hash);
@@ -101,6 +104,18 @@ export class CalendarSyncEngine {
           recreated += 1;
         }
         continue;
+      }
+
+      if (mode === 'verify-existence') {
+        const eventExists = this.provider.eventExists;
+        if (eventExists === undefined) {
+          throw new Error(`${this.provider.displayName} cannot verify managed calendar events.`);
+        }
+        if (!await eventExists.call(this.provider, reference)) {
+          await this.createAndStore(context.calendarId, event, hash);
+          recreated += 1;
+          continue;
+        }
       }
       unchanged += 1;
     }

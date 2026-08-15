@@ -14,6 +14,7 @@
     type TimelineOverviewItem,
   } from '../../core/TimelineDomain';
   import type { CalendarItemOverride, RoadmapNode } from '../../types';
+  import CalendarActionButton from './CalendarActionButton.svelte';
 
   let {
     nodes,
@@ -544,16 +545,6 @@
     ].filter((line) => line.length > 0).join('\n');
   }
 
-  function calendarActionLabel(node: RoadmapNode): string {
-    if (!isCalendarAvailable(node)) return 'Add a date before using Calendar';
-    const override = getCalendarOverride(node);
-    if (override === 'include') return 'Included by override · Use automatic calendar policy';
-    if (override === 'exclude') return 'Excluded by override · Use automatic calendar policy';
-    return isCalendarIncluded(node)
-      ? 'Synced to calendar · Exclude from calendar'
-      : 'Add to calendar';
-  }
-
   function clearPointerState(): void {
     draggedNode = null;
     dragStartX = null;
@@ -650,17 +641,13 @@
                   aria-label={`Quick note for ${row.label}`}
                   onclick={() => onEdit(taskNode)}
                 >✎</button>
-                <button
-                  type="button"
-                  class="task-action calendar-action"
-                  class:included={isCalendarIncluded(taskNode)}
-                  class:excluded={getCalendarOverride(taskNode) === 'exclude'}
-                  title={calendarActionLabel(taskNode)}
-                  aria-label={`${calendarActionLabel(taskNode)}: ${formatNodeTitle(taskNode)}`}
-                  aria-pressed={isCalendarIncluded(taskNode)}
-                  disabled={!isCalendarAvailable(taskNode)}
-                  onclick={() => void onToggleCalendar(taskNode)}
-                >{getCalendarOverride(taskNode) === 'exclude' ? '⊘' : isCalendarIncluded(taskNode) ? '◉' : '○'}</button>
+                <CalendarActionButton
+                  itemLabel={formatNodeTitle(taskNode)}
+                  included={isCalendarIncluded(taskNode)}
+                  override={getCalendarOverride(taskNode)}
+                  available={isCalendarAvailable(taskNode)}
+                  onToggle={() => onToggleCalendar(taskNode)}
+                />
               </div>
             {/if}
           {/each}
@@ -961,8 +948,7 @@
   }
 
   .checkbox-action,
-  .scratchpad-action,
-  .calendar-action {
+  .scratchpad-action {
     display: inline-grid;
     place-items: center;
     padding: var(--size-2-1);
@@ -971,17 +957,8 @@
   }
 
   .checkbox-action:hover,
-  .scratchpad-action:hover,
-  .calendar-action:hover {
+  .scratchpad-action:hover {
     color: var(--interactive-accent) !important;
-  }
-
-  .calendar-action.included {
-    color: var(--interactive-accent) !important;
-  }
-
-  .calendar-action.excluded {
-    color: var(--text-faint) !important;
   }
 
   .action-spacer {

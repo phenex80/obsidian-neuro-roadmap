@@ -18,7 +18,7 @@ The Calendar toolbar menu distinguishes **Export current view** from **Export al
 
 Inline tasks receive a compact Obsidian block ID only when a calendar operation first needs stable identity. Provider IDs and sync metadata remain in plugin-managed state.
 
-On Obsidian desktop, the optional **Google Calendar** provider can project the same eligible items directly through the Google Calendar API. It uses installed-app OAuth with a loopback redirect and PKCE, writes only managed downstream events, and never imports Google edits into Markdown. Select an existing writable calendar or explicitly create `Neuro Roadmap`; automatic synchronization is debounced and **Sync now** performs a full remote verification. Generic ICS remains available without an account and on mobile. See [Google Calendar setup](docs/google-calendar-setup.md).
+On Obsidian desktop, the optional **Google Calendar** provider can project the same eligible items directly through the Google Calendar API. It uses installed-app OAuth with a loopback redirect and PKCE, writes only managed downstream events, and never imports Google edits into Markdown. Select an existing writable calendar or explicitly create `Neuro Roadmap`; changes synchronize after a three-second debounce, periodic existence verification runs every 15 minutes by default, and **Sync now** fully reasserts Markdown-defined events. Generic ICS remains available without an account and on mobile. See [Google Calendar setup](docs/google-calendar-setup.md).
 
 ## Markdown data
 

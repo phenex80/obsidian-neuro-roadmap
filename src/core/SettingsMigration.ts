@@ -1,4 +1,9 @@
-import { propertyMappingSchema, roadmapSettingsSchema } from '../types';
+import {
+  CALENDAR_POLICY_VERSION,
+  RECOMMENDED_CALENDAR_POLICY,
+  propertyMappingSchema,
+  roadmapSettingsSchema,
+} from '../types';
 import {
   normalizePropertyKey,
   normalizeSemanticValue,
@@ -19,6 +24,14 @@ export function migrateRoadmapSettingsData(value: unknown): unknown {
       : {};
   const defaults = propertyMappingSchema.parse({});
   const propertyMappings: Record<string, unknown> = { ...existingMappings };
+  const existingCalendar = objectRecord(legacy['calendar']);
+  const calendar = existingCalendar['calendarPolicyVersion'] === CALENDAR_POLICY_VERSION
+    ? existingCalendar
+    : {
+        ...existingCalendar,
+        calendarPolicyVersion: CALENDAR_POLICY_VERSION,
+        automaticallyInclude: { ...RECOMMENDED_CALENDAR_POLICY },
+      };
 
   const legacySubjectKeys = legacy['subjectPropertyKeys'];
   if (propertyMappings['subject'] === undefined && typeof legacySubjectKeys === 'string') {
@@ -35,12 +48,19 @@ export function migrateRoadmapSettingsData(value: unknown): unknown {
   return {
     ...legacy,
     propertyMappings,
+    calendar,
     excludedTemplateValues: withoutRoadmapTemplateValue(
       typeof legacy['excludedTemplateValues'] === 'string'
         ? legacy['excludedTemplateValues']
         : roadmapSettingsSchema.parse({}).excludedTemplateValues,
     ),
   };
+}
+
+export function needsCalendarPolicyMigration(value: unknown): boolean {
+  const root = objectRecord(value);
+  const calendar = objectRecord(root['calendar']);
+  return calendar['calendarPolicyVersion'] !== CALENDAR_POLICY_VERSION;
 }
 
 export function withoutRoadmapTemplateValue(value: string): string {
@@ -55,4 +75,10 @@ function appendMappingKey(existing: string, key: string): string {
     values.push(key);
   }
   return values.join(', ');
+}
+
+function objectRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }

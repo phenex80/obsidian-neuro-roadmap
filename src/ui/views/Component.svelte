@@ -197,18 +197,18 @@
 
   function calendarSyncLabel(): string {
     if (calendarSyncStatus.phase === 'syncing') return 'Syncing…';
-    if (calendarSyncStatus.phase === 'scheduled') return 'Sync scheduled';
+    if (calendarSyncStatus.phase === 'scheduled') return 'Waiting to sync…';
     if (calendarSyncStatus.phase === 'error') {
       return calendarSyncStatus.message === undefined
         ? 'Sync error'
         : `Sync error: ${calendarSyncStatus.message}`;
     }
     const lastSyncAt = getLastCalendarSyncAt();
-    if (lastSyncAt === undefined) return 'Not synchronized yet';
+    if (lastSyncAt === undefined) return 'Waiting for first synchronization';
     const timestamp = new Date(lastSyncAt);
     return Number.isNaN(timestamp.getTime())
       ? `Last sync: ${lastSyncAt}`
-      : `Last sync: ${timestamp.toLocaleString()}`;
+      : `Up to date · ${timestamp.toLocaleString()}`;
   }
 
   function cloneSettings(value: Readonly<RoadmapSettings>): RoadmapSettings {

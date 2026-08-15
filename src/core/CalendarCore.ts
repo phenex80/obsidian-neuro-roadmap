@@ -30,11 +30,21 @@ export interface CalendarEventProjection {
   readonly description: string;
   readonly startDate: string;
   readonly endDateExclusive: string;
-  readonly allDay: true;
-  readonly availability: 'free';
+  readonly startDateTime?: string;
+  readonly endDateTime?: string;
+  readonly timeZone?: string;
+  readonly allDay: boolean;
+  readonly availability: 'free' | 'busy';
   readonly reminderMinutes: number | null;
   readonly completed: boolean;
   readonly overdue: boolean;
+}
+
+export interface CalendarTemporalProjection {
+  readonly startDate: string;
+  readonly endDateExclusive: string;
+  readonly allDay: true;
+  readonly availability: 'free';
 }
 
 export function isCalendarEligible(
@@ -61,8 +71,8 @@ export function projectCalendarEvent(
   if (!isCalendarEligible(node, options)) {
     return null;
   }
-  const eventDate = calendarCommitmentDate(node);
-  if (eventDate === null) {
+  const temporal = deriveCalendarTemporalProjection(node);
+  if (temporal === null) {
     return null;
   }
   const overdue = isNodeOverdue(node, options.today);
@@ -72,15 +82,26 @@ export function projectCalendarEvent(
     semanticType: node.calendarType,
     title: calendarTitle(node),
     description: calendarDescription(node, options.vaultName, overdue),
-    startDate: eventDate,
-    endDateExclusive: addDays(eventDate, 1),
-    allDay: true,
-    availability: 'free',
+    ...temporal,
     reminderMinutes: options.remindersEnabled
       ? options.reminderMinutes[node.calendarType]
       : null,
     completed: node.completed || node.status === 'done',
     overdue,
+  };
+}
+
+/** Provider-neutral date policy; explicit datetime/timezone data can extend this boundary later. */
+export function deriveCalendarTemporalProjection(
+  node: RoadmapNode,
+): CalendarTemporalProjection | null {
+  const semanticDate = calendarCommitmentDate(node);
+  if (semanticDate === null) return null;
+  return {
+    startDate: semanticDate,
+    endDateExclusive: addDays(semanticDate, 1),
+    allDay: true,
+    availability: 'free',
   };
 }
 

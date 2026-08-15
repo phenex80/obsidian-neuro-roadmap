@@ -152,6 +152,18 @@ export const sourceScopeRuleSchema = z.object({
   acceptedValues: z.string().default(''),
 });
 
+export const CALENDAR_POLICY_VERSION = 2 as const;
+export const RECOMMENDED_CALENDAR_POLICY = {
+  exam: true,
+  'assignment-deadline': true,
+  'project-deadline': true,
+  milestone: true,
+  presentation: true,
+  'regular-task': false,
+} as const;
+
+export const CALENDAR_VERIFICATION_INTERVALS = [0, 5, 10, 15, 30, 60] as const;
+
 export const calendarPolicySchema = z.object({
   exam: z.boolean().default(true),
   'assignment-deadline': z.boolean().default(true),
@@ -171,14 +183,23 @@ export const calendarReminderPolicySchema = z.object({
 });
 
 export const calendarSettingsSchema = z.object({
+  calendarPolicyVersion: z.literal(CALENDAR_POLICY_VERSION).default(CALENDAR_POLICY_VERSION),
   automaticallyInclude: calendarPolicySchema.default({}),
   remindersEnabled: z.boolean().default(true),
   reminderMinutes: calendarReminderPolicySchema.default({}),
+  verificationIntervalMinutes: z.union([
+    z.literal(0),
+    z.literal(5),
+    z.literal(10),
+    z.literal(15),
+    z.literal(30),
+    z.literal(60),
+  ]).default(15),
   google: z.object({
     clientId: z.string().trim().default(''),
     clientSecret: z.string().trim().default(''),
     autoSync: z.boolean().default(true),
-    debounceMs: z.number().int().min(500).max(60_000).default(2_000),
+    debounceMs: z.number().int().min(500).max(60_000).default(3_000),
   }).default({}),
 });
 
@@ -208,6 +229,7 @@ export const calendarStateSchema = z.object({
   itemIdentities: z.record(z.string().min(1)).default({}),
   itemOverrides: z.record(calendarItemOverrideSchema).default({}),
   syncRecords: z.record(calendarSyncRecordSchema).default({}),
+  calendarSyncDirty: z.boolean().default(false),
   google: googleCalendarStateSchema.default({}),
 });
 
