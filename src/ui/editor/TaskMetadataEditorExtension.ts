@@ -293,7 +293,11 @@ class TaskMetadataWidget extends WidgetType {
     button.className = 'nr-task-metadata-action nr-task-properties-action';
     button.title = 'Task properties';
     button.setAttribute('aria-label', 'Task properties');
-    setIcon(button, 'info');
+    const glyph = document.createElement('span');
+    glyph.className = 'nr-task-properties-glyph';
+    glyph.setAttribute('aria-hidden', 'true');
+    glyph.textContent = 'i';
+    button.append(glyph);
     button.addEventListener('click', () => this.owner.openProperties(button, this.node));
     return button;
   }
