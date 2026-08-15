@@ -1,4 +1,4 @@
-import { App, Modal, Platform, Plugin, PluginSettingTab, Setting, TFile } from 'obsidian';
+import { App, Modal, Notice, Platform, Plugin, PluginSettingTab, Setting, TFile } from 'obsidian';
 import './ui/editor/taskMetadata.css';
 import {
   CALENDAR_VERIFICATION_INTERVALS,
@@ -56,8 +56,7 @@ import {
   type CalendarSyncRuntimeStatus,
 } from './core/CalendarSyncController';
 import {
-  migrateRoadmapSettingsData,
-  needsCalendarPolicyMigration,
+  normalizeRoadmapSettingsData,
   withoutRoadmapTemplateValue,
 } from './core/SettingsMigration';
 import { GlobalItemView, VIEW_TYPE_NEURO_ROADMAP } from './ui/views/GlobalItemView';
@@ -219,13 +218,15 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
 
   async loadSettings(): Promise<void> {
     const savedSettings: unknown = await this.loadData();
-    const persistCalendarMigration = needsCalendarPolicyMigration(savedSettings);
-    const parsedSettings = roadmapSettingsSchema.safeParse(migrateRoadmapSettingsData(savedSettings));
-    this.settings = parsedSettings.success ? parsedSettings.data : DEFAULT_SETTINGS;
+    const normalized = normalizeRoadmapSettingsData(savedSettings);
+    this.settings = normalized.settings;
     this.settings.excludedTemplateValues = withoutRoadmapTemplateValue(
       this.settings.excludedTemplateValues,
     );
-    if (persistCalendarMigration) {
+    if (!normalized.recoverable && savedSettings !== null && savedSettings !== undefined) {
+      new Notice('Neuro Roadmap could not safely normalize saved settings. The persisted settings were left unchanged.');
+    }
+    if (normalized.recoverable && normalized.shouldPersistMigration) {
       await this.saveData(this.settings);
     }
   }

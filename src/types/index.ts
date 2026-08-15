@@ -183,6 +183,13 @@ export const calendarReminderPolicySchema = z.object({
   'regular-task': z.number().int().min(0).nullable().default(60),
 });
 
+export const googleCalendarSettingsSchema = z.object({
+  clientId: z.string().trim().default(''),
+  clientSecret: z.string().trim().default(''),
+  autoSync: z.boolean().default(true),
+  debounceMs: z.number().int().min(500).max(60_000).default(3_000),
+});
+
 export const calendarSettingsSchema = z.object({
   calendarPolicyVersion: z.literal(CALENDAR_POLICY_VERSION).default(CALENDAR_POLICY_VERSION),
   automaticallyInclude: calendarPolicySchema.default({}),
@@ -196,12 +203,7 @@ export const calendarSettingsSchema = z.object({
     z.literal(30),
     z.literal(60),
   ]).default(15),
-  google: z.object({
-    clientId: z.string().trim().default(''),
-    clientSecret: z.string().trim().default(''),
-    autoSync: z.boolean().default(true),
-    debounceMs: z.number().int().min(500).max(60_000).default(3_000),
-  }).default({}),
+  google: googleCalendarSettingsSchema.default({}),
 });
 
 export const calendarItemOverrideSchema = z.enum(['include', 'exclude']);
@@ -269,7 +271,7 @@ export type CalendarReminderPolicy = z.infer<typeof calendarReminderPolicySchema
 export type CalendarSettings = z.infer<typeof calendarSettingsSchema>;
 export type CalendarItemOverride = z.infer<typeof calendarItemOverrideSchema>;
 export type CalendarSyncRecord = z.infer<typeof calendarSyncRecordSchema>;
-export type GoogleCalendarSettings = z.infer<typeof calendarSettingsSchema>['google'];
+export type GoogleCalendarSettings = z.infer<typeof googleCalendarSettingsSchema>;
 export type GoogleCalendarState = z.infer<typeof googleCalendarStateSchema>;
 export type CalendarState = z.infer<typeof calendarStateSchema>;
 export type RoadmapNodeFrontmatter = z.infer<typeof roadmapNodeFrontmatterSchema>;

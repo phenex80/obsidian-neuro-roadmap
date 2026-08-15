@@ -91,6 +91,7 @@ import { classifyHorizon, formatRelativeTaskDate } from '../src/core/HorizonPlan
 import {
   migrateRoadmapSettingsData,
   needsCalendarPolicyMigration,
+  normalizeRoadmapSettingsData,
 } from '../src/core/SettingsMigration';
 import { roadmapSettingsSchema } from '../src/types';
 import {
@@ -2038,6 +2039,125 @@ test('calendar policy v2 migration applies recommended defaults once and preserv
 
   assert.equal(needsCalendarPolicyMigration(firstMigration), false);
   assert.deepEqual(migrateRoadmapSettingsData(firstMigration), firstMigration);
+});
+
+test('tolerant settings normalization defaults only an invalid cosmetic field', () => {
+  const normalized = normalizeRoadmapSettingsData({
+    defaultDurationBuffer: 'invalid',
+    defaultPriority: 'high',
+    propertyMappings: { subject: 'course' },
+    calendar: {
+      calendarPolicyVersion: CALENDAR_POLICY_VERSION,
+      remindersEnabled: false,
+      google: {
+        clientId: 'desktop-client',
+        clientSecret: 'desktop-secret',
+        autoSync: false,
+      },
+    },
+    calendarState: {
+      itemIdentities: { 'inline:Tasks.md#^nr-cal-a': 'item-a' },
+      syncRecords: {
+        'google:item-a': {
+          internalItemId: 'item-a',
+          provider: 'google',
+          externalCalendarId: 'calendar-a',
+          externalEventId: 'event-a',
+        },
+      },
+      google: {
+        refreshTokenSecretId: 'secret-storage-key',
+        selectedCalendarId: 'calendar-a',
+      },
+    },
+  });
+
+  assert.equal(normalized.recoverable, true);
+  assert.equal(normalized.settings.defaultDurationBuffer, 1.3);
+  assert.equal(normalized.settings.defaultPriority, 'high');
+  assert.equal(normalized.settings.propertyMappings.subject, 'course');
+  assert.equal(normalized.settings.calendar.remindersEnabled, false);
+  assert.equal(normalized.settings.calendar.google.clientId, 'desktop-client');
+  assert.equal(normalized.settings.calendar.google.clientSecret, 'desktop-secret');
+  assert.deepEqual(normalized.settings.calendarState.itemIdentities, {
+    'inline:Tasks.md#^nr-cal-a': 'item-a',
+  });
+  assert.equal(
+    normalized.settings.calendarState.syncRecords['google:item-a']?.externalEventId,
+    'event-a',
+  );
+  assert.equal(
+    normalized.settings.calendarState.google.refreshTokenSecretId,
+    'secret-storage-key',
+  );
+  assert.equal(normalized.settings.calendarState.google.selectedCalendarId, 'calendar-a');
+});
+
+test('tolerant settings normalization discards only malformed critical records', () => {
+  const normalized = normalizeRoadmapSettingsData({
+    calendar: { calendarPolicyVersion: CALENDAR_POLICY_VERSION },
+    calendarState: {
+      itemIdentities: {
+        valid: 'item-valid',
+        invalid: '',
+      },
+      itemOverrides: {
+        valid: 'include',
+        invalid: 'sometimes',
+      },
+      syncRecords: {
+        valid: {
+          internalItemId: 'item-valid',
+          provider: 'google',
+          externalEventId: 'event-valid',
+        },
+        invalid: {
+          internalItemId: '',
+          provider: 'google',
+        },
+      },
+      google: {
+        selectedCalendarId: 'calendar-valid',
+        lastSyncAt: 42,
+      },
+    },
+  });
+
+  assert.deepEqual(normalized.settings.calendarState.itemIdentities, { valid: 'item-valid' });
+  assert.deepEqual(normalized.settings.calendarState.itemOverrides, { valid: 'include' });
+  assert.deepEqual(Object.keys(normalized.settings.calendarState.syncRecords), ['valid']);
+  assert.equal(normalized.settings.calendarState.google.selectedCalendarId, 'calendar-valid');
+  assert.equal(normalized.settings.calendarState.google.lastSyncAt, undefined);
+});
+
+test('tolerant settings normalization adds missing fields and migrates old policy safely', () => {
+  const normalized = normalizeRoadmapSettingsData({
+    defaultPriority: 'low',
+    calendarState: {
+      itemIdentities: { locator: 'identity' },
+    },
+  });
+
+  assert.equal(normalized.recoverable, true);
+  assert.equal(normalized.shouldPersistMigration, true);
+  assert.equal(normalized.settings.defaultPriority, 'low');
+  assert.equal(normalized.settings.ganttScale, 'fit');
+  assert.equal(normalized.settings.calendar.calendarPolicyVersion, CALENDAR_POLICY_VERSION);
+  assert.deepEqual(normalized.settings.calendar.automaticallyInclude, RECOMMENDED_CALENDAR_POLICY);
+  assert.deepEqual(normalized.settings.calendarState.itemIdentities, { locator: 'identity' });
+});
+
+test('unrecoverable settings input never authorizes destructive persistence', () => {
+  for (const invalid of ['corrupt-settings', 42, []]) {
+    const normalized = normalizeRoadmapSettingsData(invalid);
+    assert.equal(normalized.recoverable, false);
+    assert.equal(normalized.shouldPersistMigration, false);
+    assert.deepEqual(normalized.settings, roadmapSettingsSchema.parse({}));
+  }
+
+  const fresh = normalizeRoadmapSettingsData(undefined);
+  assert.equal(fresh.recoverable, true);
+  assert.deepEqual(fresh.settings, roadmapSettingsSchema.parse({}));
 });
 
 test('compact task dates collapse equal dates and format ranges and single endpoints', () => {
