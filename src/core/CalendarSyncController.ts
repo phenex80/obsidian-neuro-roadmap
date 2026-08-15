@@ -58,8 +58,8 @@ export class CalendarSyncController {
     this.onSuccess = options.onSuccess ?? (() => undefined);
     this.onError = options.onError ?? (() => undefined);
     this.scheduleTimer = options.scheduleTimer ?? ((callback, milliseconds) =>
-      setTimeout(callback, milliseconds));
-    this.cancelTimer = options.cancelTimer ?? clearTimeout;
+      globalThis.setTimeout(callback, milliseconds));
+    this.cancelTimer = options.cancelTimer ?? ((handle) => globalThis.clearTimeout(handle));
   }
 
   subscribe(listener: StatusListener): () => void {

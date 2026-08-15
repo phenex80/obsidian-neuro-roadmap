@@ -1104,6 +1104,31 @@ test('calendar sync startup and periodic verification use safe modes and dispose
   assert.deepEqual(timers.activeDelays(), []);
 });
 
+test('calendar sync default timer cleanup succeeds on first dispose and remains idempotent', () => {
+  const originalClearTimeout = globalThis.clearTimeout;
+  let usedGlobalReceiver = false;
+  globalThis.clearTimeout = function receiverSensitiveClearTimeout(
+    this: typeof globalThis,
+    handle: Parameters<typeof clearTimeout>[0],
+  ): void {
+    if (this !== globalThis) throw new TypeError('Illegal invocation');
+    usedGlobalReceiver = true;
+    originalClearTimeout(handle);
+  } as typeof clearTimeout;
+
+  try {
+    const controller = new CalendarSyncController({
+      reconcile: async () => emptySyncReport(),
+    });
+    controller.configureVerification(() => [], 15);
+    assert.doesNotThrow(() => controller.dispose());
+    assert.doesNotThrow(() => controller.dispose());
+    assert.equal(usedGlobalReceiver, true);
+  } finally {
+    globalThis.clearTimeout = originalClearTimeout;
+  }
+});
+
 test('calendar export service distinguishes filtered selection from all eligible items', async () => {
   let records: Record<string, string> = {};
   let sequence = 0;
