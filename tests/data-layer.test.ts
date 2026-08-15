@@ -322,6 +322,11 @@ test('calendar sync state remains plugin-managed and defaults empty', () => {
   });
 });
 
+test('Gantt scale defaults to Fit while preserving a saved valid preference', () => {
+  assert.equal(roadmapSettingsSchema.parse({}).ganttScale, 'fit');
+  assert.equal(roadmapSettingsSchema.parse({ ganttScale: 'months' }).ganttScale, 'months');
+});
+
 test('ICS provider emits stable RFC 5545 all-day events with reminders', () => {
   const event = createCalendarEvent('stable-id', {
     title: 'ISKB02 · Skúška, časť; A',
@@ -1582,12 +1587,21 @@ test('overview density stays bounded for 5, 50, and 200 tasks', () => {
 });
 
 test('Gantt priority markers stay independent from status color classes', () => {
-  assert.equal(ganttPriorityMarker('high')?.label, 'High priority');
+  assert.deepEqual(ganttPriorityMarker('high'), {
+    symbol: '▲',
+    label: 'High priority',
+    tone: 'high',
+  });
   assert.equal(ganttPriorityMarker('highest')?.label, 'Highest priority');
   assert.equal(ganttPriorityMarker('medium'), null);
-  assert.equal(ganttPriorityMarker('low'), null);
+  assert.deepEqual(ganttPriorityMarker('low'), {
+    symbol: '▼',
+    label: 'Low priority',
+    tone: 'low',
+  });
 
   assert.equal(ganttBarPresentation('todo', 'high').statusClass, 'status-todo');
+  assert.equal(ganttBarPresentation('todo', 'low').statusClass, 'status-todo');
   assert.equal(ganttBarPresentation('in-progress', 'high').statusClass, 'status-in-progress');
   assert.equal(ganttBarPresentation('done', 'high').statusClass, 'status-done');
   assert.equal(
@@ -1621,11 +1635,11 @@ test('Today uses the local calendar date and stable date-only coordinates across
 });
 
 test('Gantt viewport zoom presets expose materially distinct time spans', () => {
-  const viewportWidth = 920;
+  const viewportWidth = 700;
 
-  assert.equal(timelineVisibleDayCount('weeks', 365), 42);
-  assert.equal(timelineVisibleDayCount('months', 365), 92);
-  assert.equal(timelineVisibleDayCount('semester', 365), 180);
+  assert.equal(timelineVisibleDayCount('weeks', 365), 35);
+  assert.equal(timelineVisibleDayCount('months', 365), 70);
+  assert.equal(timelineVisibleDayCount('semester', 365), 140);
   assert.equal(timelineVisibleDayCount('fit', 365), 365);
 
   const weeksWidth = timelineDayPixelWidth('weeks', viewportWidth, 365);
@@ -1634,6 +1648,7 @@ test('Gantt viewport zoom presets expose materially distinct time spans', () => 
   assert.ok(weeksWidth > monthsWidth);
   assert.ok(monthsWidth > semesterWidth);
   assert.equal(monthsWidth, 10);
+  assert.equal(semesterWidth, 5);
   assert.equal(timelineContentPixelWidth('fit', viewportWidth, 365), viewportWidth);
 });
 
@@ -1703,11 +1718,11 @@ test('fit uses the complete dated domain while overview coordinates remain full-
   const singleDateDomain = createTimelineDataDomain(singleDate, '2026-09-10');
   assert.equal(
     createGanttTimelineDomain(singleDate, singleDateDomain, 'months', '2026-09-10').dayCount,
-    92,
+    70,
   );
   assert.equal(
     createGanttTimelineDomain(singleDate, singleDateDomain, 'semester', '2026-09-10').dayCount,
-    180,
+    140,
   );
 
   const dated = [

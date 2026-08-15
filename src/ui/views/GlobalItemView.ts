@@ -40,6 +40,8 @@ export class GlobalItemView extends ItemView {
         initialSettings: this.plugin.settings,
         subscribeSettings: (listener: (settings: Readonly<RoadmapSettings>) => void) =>
           this.plugin.subscribeSettings(listener),
+        persistGanttScale: (scale: RoadmapSettings['ganttScale']) =>
+          this.plugin.setGanttScale(scale),
         getCalendarOverride: (node: RoadmapNode) => this.plugin.getCalendarOverride(node),
         isCalendarIncluded: (node: RoadmapNode) => this.plugin.isCalendarIncluded(node),
         isCalendarAvailable: (node: RoadmapNode) => this.plugin.isNodeCalendarAvailable(node),

@@ -28,6 +28,7 @@
     scheduler,
     initialSettings,
     subscribeSettings,
+    persistGanttScale,
     getCalendarOverride,
     isCalendarIncluded,
     isCalendarAvailable,
@@ -44,6 +45,7 @@
     scheduler: RoadmapScheduler;
     initialSettings: Readonly<RoadmapSettings>;
     subscribeSettings: (listener: (settings: Readonly<RoadmapSettings>) => void) => () => void;
+    persistGanttScale: (scale: TimelineScale) => Promise<void>;
     getCalendarOverride: (node: RoadmapNode) => CalendarItemOverride | undefined;
     isCalendarIncluded: (node: RoadmapNode) => boolean;
     isCalendarAvailable: (node: RoadmapNode) => boolean;
@@ -62,7 +64,7 @@
   let selectedSubjects = $state<string[]>([]);
   let priority = $state<'all' | 'high' | 'medium' | 'low'>('all');
   let viewMode = $state<'dashboard' | 'gantt' | 'horizon'>('dashboard');
-  let scale = $state<TimelineScale>('weeks');
+  let scale = $state<TimelineScale>('fit');
   let scratchpadNode = $state<RoadmapNode | null>(null);
   let circularDependencyCycles = $state<readonly (readonly string[])[]>([]);
   let exportingCalendar = $state(false);
@@ -99,12 +101,14 @@
 
   onMount(() => {
     settings = cloneSettings(initialSettings);
+    scale = initialSettings.ganttScale;
     const unsubscribeIndexer = indexer.subscribe((updatedNodes) => {
       nodes = updatedNodes;
       circularDependencyCycles = indexer.getCircularDependencyCycles();
     });
     const unsubscribeSettings = subscribeSettings((updatedSettings) => {
       settings = cloneSettings(updatedSettings);
+      scale = updatedSettings.ganttScale;
     });
     const unsubscribeCalendarSync = subscribeCalendarSyncStatus((status) => {
       calendarSyncStatus = status;
@@ -119,6 +123,11 @@
 
   function openScratchpad(node: RoadmapNode): void {
     scratchpadNode = node;
+  }
+
+  async function selectScale(nextScale: TimelineScale): Promise<void> {
+    scale = nextScale;
+    await persistGanttScale(nextScale);
   }
 
   function formatSubject(subjectPath: string): string {
@@ -285,7 +294,7 @@
           <button
             class:active={scale === timelineScale}
             aria-pressed={scale === timelineScale}
-            onclick={() => (scale = timelineScale)}
+            onclick={() => void selectScale(timelineScale)}
           >
             {timelineScale.charAt(0).toUpperCase() + timelineScale.slice(1)}
           </button>

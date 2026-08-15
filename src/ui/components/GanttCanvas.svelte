@@ -860,7 +860,8 @@
               {#if !item.marker}
                 {#if presentation.priorityMarker !== null}
                   <span
-                    class="priority-indicator"
+                    class={`priority-indicator priority-${presentation.priorityMarker.tone}`}
+                    title={presentation.priorityMarker.label}
                     aria-label={presentation.priorityMarker.label}
                   >{presentation.priorityMarker.symbol}</span>
                 {/if}
@@ -1383,11 +1384,21 @@
     display: inline-grid;
     flex: 0 0 auto;
     place-items: center;
-    color: currentColor;
+    padding-inline: var(--size-2-1);
+    border: var(--border-width) solid currentColor;
+    border-radius: var(--radius-s);
+    background: var(--background-primary);
     font-size: var(--font-ui-smaller);
     font-weight: var(--font-bold);
     line-height: 1;
-    opacity: 0.85;
+  }
+
+  .priority-high {
+    color: var(--text-error);
+  }
+
+  .priority-low {
+    color: var(--color-cyan);
   }
 
   .color-coded.status-todo {

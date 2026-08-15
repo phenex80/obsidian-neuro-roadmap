@@ -3,6 +3,7 @@ import type { NodeStatus, Priority } from '../types';
 export interface GanttPriorityMarker {
   readonly symbol: string;
   readonly label: string;
+  readonly tone: 'high' | 'low';
 }
 
 export interface GanttBarPresentation {
@@ -13,10 +14,13 @@ export interface GanttBarPresentation {
 export function ganttPriorityMarker(priority: Priority | string): GanttPriorityMarker | null {
   const normalized = priority.trim().toLocaleLowerCase();
   if (normalized === 'highest') {
-    return { symbol: '▲', label: 'Highest priority' };
+    return { symbol: '▲', label: 'Highest priority', tone: 'high' };
   }
   if (normalized === 'high') {
-    return { symbol: '▲', label: 'High priority' };
+    return { symbol: '▲', label: 'High priority', tone: 'high' };
+  }
+  if (normalized === 'low') {
+    return { symbol: '▼', label: 'Low priority', tone: 'low' };
   }
   return null;
 }

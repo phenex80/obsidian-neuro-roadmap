@@ -3,6 +3,7 @@ import { z } from 'zod';
 export const NODE_TYPES = ['roadmap', 'project', 'milestone', 'task'] as const;
 export const PRIORITIES = ['high', 'medium', 'low'] as const;
 export const NODE_STATUSES = ['todo', 'in-progress', 'done', 'unscheduled'] as const;
+export const GANTT_SCALES = ['weeks', 'months', 'semester', 'fit'] as const;
 export const SOURCE_SCOPE_MODES = ['all', 'rules'] as const;
 export const CALENDAR_SEMANTIC_TYPES = [
   'exam',
@@ -236,6 +237,7 @@ export const calendarStateSchema = z.object({
 export const roadmapSettingsSchema = z.object({
   defaultDurationBuffer: z.number().finite().positive().default(1.3),
   defaultPriority: z.enum(PRIORITIES).default('medium'),
+  ganttScale: z.enum(GANTT_SCALES).default('fit'),
   enableColorCoding: z.boolean().default(true),
   propertyMappings: propertyMappingSchema.default({}),
   valueMappings: semanticValueMappingSchema.default({}),
@@ -254,6 +256,7 @@ export const roadmapSettingsSchema = z.object({
 export type NodeType = (typeof NODE_TYPES)[number];
 export type Priority = (typeof PRIORITIES)[number];
 export type NodeStatus = (typeof NODE_STATUSES)[number];
+export type GanttScale = (typeof GANTT_SCALES)[number];
 export type SourceScopeMode = (typeof SOURCE_SCOPE_MODES)[number];
 export type CalendarSemanticType = (typeof CALENDAR_SEMANTIC_TYPES)[number];
 export type CanonicalPropertyField = (typeof CANONICAL_PROPERTY_FIELDS)[number];

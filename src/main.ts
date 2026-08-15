@@ -12,6 +12,7 @@ import {
   type ColorSettings,
   type CalendarItemOverride,
   type CalendarSemanticType,
+  type GanttScale,
   type Priority,
   type PropertyMappings,
   type RoadmapSettings,
@@ -245,6 +246,12 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     return () => {
       this.settingsListeners.delete(listener);
     };
+  }
+
+  async setGanttScale(scale: GanttScale): Promise<void> {
+    if (this.settings.ganttScale === scale) return;
+    this.settings.ganttScale = scale;
+    await this.saveSettings(false, false);
   }
 
   getCalendarOverride(node: RoadmapNode): CalendarItemOverride | undefined {

@@ -1,13 +1,13 @@
-import type { NodeStatus, RoadmapNode } from '../types';
+import { GANTT_SCALES, type GanttScale, type NodeStatus, type RoadmapNode } from '../types';
 
 export const MILLISECONDS_PER_DAY = 86_400_000;
-export const TIMELINE_SCALES = ['weeks', 'months', 'semester', 'fit'] as const;
-export type TimelineScale = (typeof TIMELINE_SCALES)[number];
+export const TIMELINE_SCALES = GANTT_SCALES;
+export type TimelineScale = GanttScale;
 
 const TIMELINE_VISIBLE_DAY_COUNTS: Readonly<Record<Exclude<TimelineScale, 'fit'>, number>> = {
-  weeks: 42,
-  months: 92,
-  semester: 180,
+  weeks: 35,
+  months: 70,
+  semester: 140,
 };
 
 export interface TimelineDomain {
