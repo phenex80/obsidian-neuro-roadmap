@@ -1381,16 +1381,16 @@
   }
 
   .priority-indicator {
-    display: inline-grid;
+    display: inline-block;
     flex: 0 0 auto;
-    place-items: center;
-    padding-inline: var(--size-2-1);
-    border: var(--border-width) solid currentColor;
-    border-radius: var(--radius-s);
-    background: var(--background-primary);
+    padding: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
     font-size: var(--font-ui-smaller);
     font-weight: var(--font-bold);
     line-height: 1;
+    vertical-align: baseline;
   }
 
   .priority-high {
