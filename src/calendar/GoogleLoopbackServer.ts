@@ -1,3 +1,4 @@
+import { Platform } from 'obsidian';
 import type { Server } from 'node:http';
 import type { GoogleAuthorizationResponse } from './GoogleAuth';
 
@@ -10,11 +11,31 @@ export interface GoogleLoopbackSession {
   close(): void;
 }
 
+export interface GoogleLoopbackRuntime {
+  readonly isDesktopApp: boolean;
+  loadHttpModule(): typeof import('node:http');
+}
+
+function loadDesktopHttpModule(): typeof import('node:http') {
+  return require('http') as typeof import('node:http');
+}
+
+const DEFAULT_RUNTIME: GoogleLoopbackRuntime = {
+  get isDesktopApp(): boolean {
+    return Platform.isDesktopApp;
+  },
+  loadHttpModule: loadDesktopHttpModule,
+};
+
 /** One-shot localhost receiver for the official desktop installed-app OAuth flow. */
 export async function startGoogleLoopbackServer(
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  runtime: GoogleLoopbackRuntime = DEFAULT_RUNTIME,
 ): Promise<GoogleLoopbackSession> {
-  const { createServer } = await import('node:http');
+  if (!runtime.isDesktopApp) {
+    throw new Error('Google Calendar connection is available only on desktop.');
+  }
+  const { createServer } = runtime.loadHttpModule();
   let timeout: ReturnType<typeof globalThis.setTimeout> | undefined;
   let settled = false;
   let resolveResponse: (value: GoogleAuthorizationResponse) => void = () => undefined;

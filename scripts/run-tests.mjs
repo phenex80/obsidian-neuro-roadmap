@@ -5,6 +5,19 @@ import { resolve } from 'node:path';
 
 const outputDirectory = resolve('.test-build');
 const outputFile = resolve(outputDirectory, 'data-layer.test.mjs');
+const obsidianTestStub = {
+  name: 'obsidian-test-stub',
+  setup(build) {
+    build.onResolve({ filter: /^obsidian$/ }, () => ({
+      path: 'obsidian',
+      namespace: 'obsidian-test-stub',
+    }));
+    build.onLoad({ filter: /.*/, namespace: 'obsidian-test-stub' }, () => ({
+      contents: 'export const Platform = { isDesktopApp: true, isMobile: false };',
+      loader: 'js',
+    }));
+  },
+};
 
 await rm(outputDirectory, { recursive: true, force: true });
 await mkdir(outputDirectory, { recursive: true });
@@ -19,6 +32,7 @@ try {
     target: 'node22',
     sourcemap: 'inline',
     logLevel: 'silent',
+    plugins: [obsidianTestStub],
   });
 
   const exitCode = await new Promise((resolveExitCode, reject) => {

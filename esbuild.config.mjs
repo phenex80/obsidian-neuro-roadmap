@@ -51,7 +51,7 @@ const sveltePlugin = {
 const context = await esbuild.context({
   entryPoints: ['src/main.ts'],
   bundle: true,
-  external: ['obsidian', 'node:http'],
+  external: ['obsidian', 'http', 'node:http'],
   format: 'cjs',
   target: 'es2022',
   minify: production,

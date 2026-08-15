@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import test from 'node:test';
 import type { App, CachedMetadata, MetadataCache, TFile } from 'obsidian';
 import { RoadmapParser, createDefaultParserOptions, isCompletedTaskMarker } from '../src/core/Parser';
@@ -30,7 +31,10 @@ import {
   GoogleAuthClient,
   GoogleAuthError,
 } from '../src/calendar/GoogleAuth';
-import { startGoogleLoopbackServer } from '../src/calendar/GoogleLoopbackServer';
+import {
+  startGoogleLoopbackServer,
+  type GoogleLoopbackRuntime,
+} from '../src/calendar/GoogleLoopbackServer';
 import type {
   CalendarHttpRequest,
   CalendarHttpResponse,
@@ -320,9 +324,17 @@ test('Google installed-app authorization uses loopback PKCE and required scopes'
 });
 
 test('Google loopback receiver binds only to 127.0.0.1 and accepts one OAuth response', async (context) => {
+  let httpModuleAccesses = 0;
+  const desktopRuntime: GoogleLoopbackRuntime = {
+    isDesktopApp: true,
+    loadHttpModule: () => {
+      httpModuleAccesses += 1;
+      return { createServer } as typeof import('node:http');
+    },
+  };
   let loopback: Awaited<ReturnType<typeof startGoogleLoopbackServer>>;
   try {
-    loopback = await startGoogleLoopbackServer(2_000);
+    loopback = await startGoogleLoopbackServer(2_000, desktopRuntime);
   } catch (error) {
     if (isSystemErrorCode(error, 'EPERM')) {
       context.skip('The execution sandbox forbids binding a loopback listener.');
@@ -330,6 +342,7 @@ test('Google loopback receiver binds only to 127.0.0.1 and accepts one OAuth res
     }
     throw error;
   }
+  assert.equal(httpModuleAccesses, 1);
   const redirect = new URL(loopback.redirectUri);
   assert.equal(redirect.hostname, '127.0.0.1');
   assert.equal(redirect.pathname, '/');
@@ -345,6 +358,23 @@ test('Google loopback receiver binds only to 127.0.0.1 and accepts one OAuth res
     code: 'authorization-code',
     error: null,
   });
+});
+
+test('Google loopback rejects mobile before accessing the Node HTTP module', async () => {
+  let httpModuleAccesses = 0;
+  const mobileRuntime: GoogleLoopbackRuntime = {
+    isDesktopApp: false,
+    loadHttpModule: () => {
+      httpModuleAccesses += 1;
+      return { createServer } as typeof import('node:http');
+    },
+  };
+
+  await assert.rejects(
+    startGoogleLoopbackServer(2_000, mobileRuntime),
+    /available only on desktop/u,
+  );
+  assert.equal(httpModuleAccesses, 0);
 });
 
 test('Google authorization validates state and stores refresh tokens outside settings', async () => {
