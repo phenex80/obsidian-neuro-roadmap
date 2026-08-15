@@ -1,14 +1,13 @@
 import type { NodeStatus, RoadmapNode } from '../types';
 
 export const MILLISECONDS_PER_DAY = 86_400_000;
-export const TIMELINE_SCALES = ['days', 'weeks', 'months', 'semester', 'fit'] as const;
+export const TIMELINE_SCALES = ['weeks', 'months', 'semester', 'fit'] as const;
 export type TimelineScale = (typeof TIMELINE_SCALES)[number];
 
-const TIMELINE_MINIMUM_DAY_COUNTS: Readonly<Record<Exclude<TimelineScale, 'fit'>, number>> = {
-  days: 14,
-  weeks: 84,
+const TIMELINE_VISIBLE_DAY_COUNTS: Readonly<Record<Exclude<TimelineScale, 'fit'>, number>> = {
+  weeks: 42,
   months: 92,
-  semester: 154,
+  semester: 180,
 };
 
 export interface TimelineDomain {
@@ -58,14 +57,27 @@ export function createTimelineDomain(
   };
 }
 
-export function createTimelineDomainForScale(
+export function createTimelineDataDomain(
   nodes: readonly RoadmapNode[],
+  fallbackStart = todayDate(),
+): TimelineDomain {
+  return createTimelineDomain(nodes, 1, fallbackStart);
+}
+
+export function createGanttTimelineDomain(
+  nodes: readonly RoadmapNode[],
+  dataDomain: TimelineDomain,
   scale: TimelineScale,
   fallbackStart = todayDate(),
 ): TimelineDomain {
-  return scale === 'fit'
-    ? createFitTimelineDomain(nodes, 7, fallbackStart)
-    : createTimelineDomain(nodes, timelineMinimumDayCount(scale), fallbackStart);
+  if (scale === 'fit') return createFitTimelineDomain(nodes, 7, fallbackStart);
+  const visibleDayCount = timelineVisibleDayCount(scale, dataDomain.dayCount);
+  if (dataDomain.dayCount >= visibleDayCount) return dataDomain;
+  return {
+    startDate: dataDomain.startDate,
+    endDate: addDays(dataDomain.startDate, visibleDayCount - 1),
+    dayCount: visibleDayCount,
+  };
 }
 
 export function createFitTimelineDomain(
@@ -95,20 +107,63 @@ export function createFitTimelineDomain(
   };
 }
 
-export function timelineMinimumDayCount(scale: Exclude<TimelineScale, 'fit'>): number {
-  return TIMELINE_MINIMUM_DAY_COUNTS[scale];
+export function timelineVisibleDayCount(scale: TimelineScale, dataDayCount: number): number {
+  return scale === 'fit'
+    ? Math.max(1, dataDayCount)
+    : TIMELINE_VISIBLE_DAY_COUNTS[scale];
 }
 
-export function timelineScaleDayWidth(scale: TimelineScale): string {
-  if (scale === 'weeks') return '0.9375rem';
-  if (scale === 'months') return '0.5rem';
-  if (scale === 'semester') return '0.25rem';
-  if (scale === 'fit') return '0rem';
-  return 'clamp(4.5rem, 7vw, 6rem)';
+export function timelineDayPixelWidth(
+  scale: TimelineScale,
+  viewportWidth: number,
+  dataDayCount: number,
+): number {
+  const safeViewportWidth = Math.max(1, viewportWidth);
+  return safeViewportWidth / timelineVisibleDayCount(scale, dataDayCount);
+}
+
+export function timelineContentPixelWidth(
+  scale: TimelineScale,
+  viewportWidth: number,
+  dataDayCount: number,
+): number {
+  return timelineDayPixelWidth(scale, viewportWidth, dataDayCount) * Math.max(1, dataDayCount);
+}
+
+export function timelineScrollOffsetForDate(
+  date: string,
+  domain: TimelineDomain,
+  scale: TimelineScale,
+  viewportWidth: number,
+): number | null {
+  const valid = validDate(date);
+  if (valid === null || valid < domain.startDate || valid > domain.endDate) return null;
+  const dayWidth = timelineDayPixelWidth(scale, viewportWidth, domain.dayCount);
+  const contentWidth = timelineContentPixelWidth(scale, viewportWidth, domain.dayCount);
+  const dateCenter = (daysBetween(domain.startDate, valid) + 0.5) * dayWidth;
+  return clamp(dateCenter - viewportWidth / 2, 0, Math.max(0, contentWidth - viewportWidth));
+}
+
+export function selectTimelineZoomAnchor(
+  today: string,
+  visibleStart: string | null,
+  visibleEnd: string | null,
+  viewportCenter: string | null,
+  earliestRelevantDate: string,
+): string {
+  if (
+    validDate(today) !== null &&
+    visibleStart !== null &&
+    visibleEnd !== null &&
+    today >= visibleStart &&
+    today <= visibleEnd
+  ) {
+    return today;
+  }
+  return validDate(viewportCenter ?? undefined) ?? earliestRelevantDate;
 }
 
 export function timelineOverviewBucketCount(scale: TimelineScale): number {
-  if (scale === 'days') return 48;
   if (scale === 'weeks') return 32;
   if (scale === 'months') return 24;
   if (scale === 'semester') return 18;
@@ -116,7 +171,6 @@ export function timelineOverviewBucketCount(scale: TimelineScale): number {
 }
 
 export function collapsedTimelineBucketCount(scale: TimelineScale): number {
-  if (scale === 'days') return 36;
   if (scale === 'weeks') return 20;
   if (scale === 'months') return 16;
   if (scale === 'semester') return 12;

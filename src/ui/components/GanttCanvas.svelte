@@ -1,18 +1,23 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { calculateBufferedDuration, calculateCalendarDaySpan } from '../../core/BufferCalculator';
   import {
     addDays,
     buildTimelineOverview,
     collapsedTimelineBucketCount,
-    createTimelineDomainForScale,
+    createFitTimelineDomain,
+    createGanttTimelineDomain,
+    createTimelineDataDomain,
     daysBetween,
     formatEntityLabel,
     formatNodeTitle,
     isNodeOverdue,
+    selectTimelineZoomAnchor,
+    timelineContentPixelWidth,
+    timelineDayPixelWidth,
     timelineDatePositionPercent,
     timelineOverviewBucketCount,
-    timelineScaleDayWidth,
+    timelineScrollOffsetForDate,
     todayDate,
     validDate,
     type TimelineScale,
@@ -94,7 +99,8 @@
   );
   let hierarchyNodes = $derived([...nodes].sort(compareDatedNodes));
   let domainNodes = $derived(datedNodes.map(expandNodeForBufferedDomain));
-  let timelineDomain = $derived(createTimelineDomainForScale(domainNodes, scale));
+  let dataDomain = $derived(createTimelineDataDomain(domainNodes));
+  let timelineDomain = $derived(createGanttTimelineDomain(domainNodes, dataDomain, scale));
   let timelineStart = $derived(timelineDomain.startDate);
   let dayCount = $derived(timelineDomain.dayCount);
   let dayLabels = $derived(
@@ -107,16 +113,65 @@
   let timelineNodes = $derived(buildTimelineNodes(ganttRows, timelineStart));
   let localToday = $derived(todayDate());
   let todayPosition = $derived(timelineDatePositionPercent(localToday, timelineDomain));
+  let overviewDomain = $derived(createFitTimelineDomain(domainNodes));
+  let overviewTodayPosition = $derived(timelineDatePositionPercent(localToday, overviewDomain));
   let overviewItems = $derived(
-    buildTimelineOverview(datedNodes, timelineDomain, timelineOverviewBucketCount(scale), localToday),
+    buildTimelineOverview(datedNodes, overviewDomain, timelineOverviewBucketCount(scale), localToday),
+  );
+  let timelineViewportWidth = $state(640);
+  let taskRailWidth = $state(0);
+  let dayPixelWidth = $derived(timelineDayPixelWidth(scale, timelineViewportWidth, dayCount));
+  let timelineContentWidth = $derived(
+    timelineContentPixelWidth(scale, timelineViewportWidth, dayCount),
   );
 
+  let ganttScroll = $state<HTMLDivElement>();
+  let taskRail = $state<HTMLElement>();
   let timelineBody = $state<HTMLDivElement>();
   let draggedNode = $state<RoadmapNode | null>(null);
   let dragStartX = $state<number | null>(null);
   let creationStartDate = $state<string | null>(null);
   let creationStartX = $state<number | null>(null);
   let writing = $state(false);
+  let visibleStartDate = $state<string | null>(null);
+  let visibleEndDate = $state<string | null>(null);
+  let viewportCenterDate = $state<string | null>(null);
+  let appliedScale = $state<TimelineScale | null>(null);
+
+  onMount(() => {
+    const updateLayout = (): void => {
+      if (ganttScroll === undefined || taskRail === undefined) return;
+      taskRailWidth = taskRail.getBoundingClientRect().width;
+      timelineViewportWidth = Math.max(1, ganttScroll.clientWidth - taskRailWidth);
+      void tick().then(updateViewportState);
+    };
+    const observer = new ResizeObserver(updateLayout);
+    if (ganttScroll !== undefined) observer.observe(ganttScroll);
+    if (taskRail !== undefined) observer.observe(taskRail);
+    updateLayout();
+    return () => observer.disconnect();
+  });
+
+  $effect(() => {
+    const requestedScale = scale;
+    if (appliedScale === null) {
+      appliedScale = requestedScale;
+      return;
+    }
+    if (requestedScale === appliedScale) return;
+    const anchor = selectTimelineZoomAnchor(
+      localToday,
+      visibleStartDate,
+      visibleEndDate,
+      viewportCenterDate,
+      dataDomain.startDate,
+    );
+    appliedScale = requestedScale;
+    void tick().then(() => {
+      scrollTimelineToDate(anchor);
+      updateViewportState();
+    });
+  });
 
   function hasUsableDate(node: RoadmapNode): boolean {
     return validDate(node.startDate) !== null || validDate(node.dueDate) !== null;
@@ -281,15 +336,6 @@
     dates: readonly string[],
     timelineScale: TimelineScale,
   ): HeaderSegment[] {
-    if (timelineScale === 'days') {
-      return dates.map((date, index) => ({
-        key: date,
-        label: formatDay(date),
-        startColumn: index + 1,
-        span: 1,
-      }));
-    }
-
     const segments: HeaderSegment[] = [];
     for (const [index, date] of dates.entries()) {
       const label = timelineScale === 'weeks' ? formatWeek(date) : formatMonth(date);
@@ -302,12 +348,6 @@
       }
     }
     return segments;
-  }
-
-  function formatDay(date: string): string {
-    return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(
-      new Date(`${date}T00:00:00Z`),
-    );
   }
 
   function formatWeek(date: string): string {
@@ -368,6 +408,37 @@
     return date.endsWith('-01');
   }
 
+  function isWeekStart(date: string): boolean {
+    return new Date(`${date}T00:00:00Z`).getUTCDay() === 1;
+  }
+
+  function updateViewportState(): void {
+    if (ganttScroll === undefined || dayPixelWidth <= 0 || dayCount <= 0) return;
+    const firstIndex = Math.min(dayCount - 1, Math.max(0, Math.floor(ganttScroll.scrollLeft / dayPixelWidth)));
+    const lastIndex = Math.min(
+      dayCount - 1,
+      Math.max(firstIndex, Math.floor((ganttScroll.scrollLeft + timelineViewportWidth - 1) / dayPixelWidth)),
+    );
+    const centerIndex = Math.min(
+      dayCount - 1,
+      Math.max(0, Math.floor((ganttScroll.scrollLeft + timelineViewportWidth / 2) / dayPixelWidth)),
+    );
+    visibleStartDate = addDays(timelineStart, firstIndex);
+    visibleEndDate = addDays(timelineStart, lastIndex);
+    viewportCenterDate = addDays(timelineStart, centerIndex);
+  }
+
+  function scrollTimelineToDate(date: string): void {
+    if (ganttScroll === undefined) return;
+    const offset = timelineScrollOffsetForDate(
+      date,
+      timelineDomain,
+      scale,
+      timelineViewportWidth,
+    );
+    if (offset !== null) ganttScroll.scrollLeft = offset;
+  }
+
   function dateFromPointer(event: PointerEvent | DragEvent): string | null {
     if (timelineBody === undefined) {
       return null;
@@ -405,7 +476,7 @@
 
   function onTimelinePointerUp(event: PointerEvent): void {
     if (draggedNode !== null) {
-      const minimumGesture = dayPixelWidth() / 4;
+      const minimumGesture = measuredDayPixelWidth() / 4;
       if (dragStartX !== null && Math.abs(event.clientX - dragStartX) >= minimumGesture) {
         void persistReschedule(draggedNode, event);
       } else {
@@ -417,7 +488,7 @@
 
     if (creationStartDate !== null && creationStartX !== null) {
       const endDate = dateFromPointer(event);
-      if (endDate !== null && Math.abs(event.clientX - creationStartX) >= dayPixelWidth() / 4) {
+      if (endDate !== null && Math.abs(event.clientX - creationStartX) >= measuredDayPixelWidth() / 4) {
         const startDate = creationStartDate <= endDate ? creationStartDate : endDate;
         const dueDate = creationStartDate <= endDate ? endDate : creationStartDate;
         void persistCreate(startDate, dueDate);
@@ -426,7 +497,7 @@
     clearPointerState();
   }
 
-  function dayPixelWidth(): number {
+  function measuredDayPixelWidth(): number {
     return timelineBody === undefined ? 0 : timelineBody.getBoundingClientRect().width / dayCount;
   }
 
@@ -569,9 +640,12 @@
 </script>
 
 <section class="gantt" aria-label="Gantt timeline">
-  <div class="gantt-scroll">
-    <div class={`gantt-shell scale-${scale}`} style={`--gantt-day-width: ${timelineScaleDayWidth(scale)}`}>
-      <aside class="task-rail" aria-label="Scheduled task list">
+  <div class="gantt-scroll" bind:this={ganttScroll} onscroll={updateViewportState}>
+    <div
+      class={`gantt-shell scale-${scale}`}
+      style={`--gantt-day-width: ${dayPixelWidth}px; --gantt-timeline-width: ${timelineContentWidth}px; --gantt-viewport-width: ${timelineViewportWidth}px; --gantt-rail-width: ${taskRailWidth}px`}
+    >
+      <aside class="task-rail" bind:this={taskRail} aria-label="Scheduled task list">
         <div class="overview-rail">
           <strong>Overview</strong>
           <span>{datedNodes.length}</span>
@@ -659,22 +733,32 @@
         style={`--day-count: ${dayCount}; --row-count: ${rowCount}`}
       >
         <div class="overview-ribbon" aria-label="Roadmap overview timeline">
-          {#each overviewItems as item (item.key)}
-            <button
-              type="button"
-              class={`overview-item overview-${item.kind} status-${item.status}`}
-              class:color-coded={enableColorCoding}
-              class:overdue={item.overdue}
-              style={`--overview-left: ${item.leftPercent}%; --overview-width: ${item.widthPercent}%; --overview-lane: ${item.lane}`}
-              title={overviewTooltip(item)}
-              aria-label={overviewTooltip(item)}
-              onclick={() => void focusOverviewItem(item)}
-            >
-              {#if item.kind === 'cluster'}
-                <span>+{item.nodes.length}</span>
-              {/if}
-            </button>
-          {/each}
+          <div class="overview-ribbon-map">
+            {#each overviewItems as item (item.key)}
+              <button
+                type="button"
+                class={`overview-item overview-${item.kind} status-${item.status}`}
+                class:color-coded={enableColorCoding}
+                class:overdue={item.overdue}
+                style={`--overview-left: ${item.leftPercent}%; --overview-width: ${item.widthPercent}%; --overview-lane: ${item.lane}`}
+                title={overviewTooltip(item)}
+                aria-label={overviewTooltip(item)}
+                onclick={() => void focusOverviewItem(item)}
+              >
+                {#if item.kind === 'cluster'}
+                  <span>+{item.nodes.length}</span>
+                {/if}
+              </button>
+            {/each}
+            {#if overviewTodayPosition !== null}
+              <div
+                class="overview-today-line"
+                style={`--today-position: ${overviewTodayPosition}%`}
+                title={`Today · ${localToday}`}
+                aria-hidden="true"
+              ></div>
+            {/if}
+          </div>
         </div>
 
         <div class={`day-header scale-${scale}`} aria-hidden="true">
@@ -702,6 +786,7 @@
             <div
               class="day-track"
               class:weekend={isWeekend(date)}
+              class:week-start={isWeekStart(date)}
               class:month-start={isMonthStart(date)}
               style={`grid-column: ${index + 1}; grid-row: 1 / -1`}
               title={date}
@@ -828,21 +913,9 @@
     --gantt-header-height: clamp(2.5rem, 5vh, 3.25rem);
     --gantt-overview-height: clamp(4.5rem, 9vh, 6rem);
     display: grid;
-    grid-template-columns: clamp(13rem, 25vw, 22rem) minmax(100%, max-content);
+    grid-template-columns: clamp(13rem, 25vw, 22rem) var(--gantt-timeline-width);
     width: max-content;
     min-width: 100%;
-  }
-
-  .gantt-shell.scale-fit {
-    grid-template-columns: clamp(13rem, 25vw, 22rem) minmax(0, 1fr);
-    width: 100%;
-  }
-
-  .gantt-shell.scale-fit .timeline-panel,
-  .gantt-shell.scale-fit .day-header,
-  .gantt-shell.scale-fit .timeline-grid {
-    width: 100%;
-    min-width: 0;
   }
 
   .task-rail {
@@ -995,26 +1068,46 @@
     display: grid;
     grid-template-columns: repeat(var(--day-count), minmax(var(--gantt-day-width), 1fr));
     grid-template-rows: var(--gantt-overview-height) var(--gantt-header-height) auto;
-    width: max-content;
-    min-width: 100%;
+    width: var(--gantt-timeline-width);
+    min-width: var(--gantt-viewport-width);
   }
 
   .overview-ribbon {
-    position: relative;
-    z-index: 2;
+    position: sticky;
+    left: var(--gantt-rail-width);
+    z-index: 6;
     grid-column: 1 / -1;
     grid-row: 1;
+    width: var(--gantt-viewport-width);
     overflow: hidden;
     border-bottom: var(--border-width) solid var(--border-color);
     background: var(--background-primary-alt);
   }
 
-  .overview-ribbon::before {
+  .overview-ribbon-map {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .overview-ribbon-map::before {
     position: absolute;
     inset: 50% 0 auto;
     height: var(--border-width);
     background: var(--border-color);
     content: '';
+  }
+
+  .overview-today-line {
+    position: absolute;
+    inset: 0 auto 0 var(--today-position);
+    z-index: 3;
+    width: calc(var(--border-width) * 2);
+    transform: translateX(-50%);
+    background: var(--interactive-accent);
+    opacity: var(--dimmed);
+    pointer-events: none;
   }
 
   .overview-item {
@@ -1064,7 +1157,8 @@
     grid-column: 1 / -1;
     grid-row: 2;
     grid-template-columns: repeat(var(--day-count), minmax(var(--gantt-day-width), 1fr));
-    min-width: max-content;
+    width: 100%;
+    min-width: 0;
   }
 
   .day-header span {
@@ -1088,7 +1182,8 @@
     grid-row: 3;
     grid-template-columns: repeat(var(--day-count), minmax(var(--gantt-day-width), 1fr));
     grid-template-rows: repeat(var(--row-count), var(--gantt-row-height));
-    min-width: max-content;
+    width: 100%;
+    min-width: 0;
     background: var(--background-primary);
     touch-action: none;
   }
@@ -1110,6 +1205,20 @@
 
   .day-track.month-start {
     border-left: calc(var(--border-width) * 2) solid var(--background-modifier-border-focus);
+  }
+
+  .scale-months .day-track.week-start {
+    border-left: var(--border-width) solid var(--background-modifier-border-focus);
+  }
+
+  .scale-semester .day-track,
+  .scale-fit .day-track {
+    border-right-color: transparent;
+  }
+
+  .scale-semester .day-track.month-start,
+  .scale-fit .day-track.month-start {
+    border-left-color: var(--background-modifier-border-focus);
   }
 
   .today-line {
@@ -1342,11 +1451,7 @@
 
   @media (max-width: 64rem) {
     .gantt-shell {
-      grid-template-columns: minmax(11rem, 22vw) minmax(100%, max-content);
-    }
-
-    .gantt-shell.scale-fit {
-      grid-template-columns: minmax(11rem, 22vw) minmax(0, 1fr);
+      grid-template-columns: minmax(11rem, 22vw) var(--gantt-timeline-width);
     }
 
     .scratchpad-action {

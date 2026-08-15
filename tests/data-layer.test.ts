@@ -25,14 +25,18 @@ import {
   addDays,
   buildTimelineOverview,
   createFitTimelineDomain,
+  createGanttTimelineDomain,
+  createTimelineDataDomain,
   createTimelineDomain,
-  createTimelineDomainForScale,
   createTimelineVisualItem,
   daysBetween,
   isNodeOverdue,
+  selectTimelineZoomAnchor,
+  timelineContentPixelWidth,
+  timelineDayPixelWidth,
   timelineDatePositionPercent,
-  timelineMinimumDayCount,
-  timelineScaleDayWidth,
+  timelineScrollOffsetForDate,
+  timelineVisibleDayCount,
   todayDate,
   type TimelineScale,
 } from '../src/core/TimelineDomain';
@@ -1599,9 +1603,10 @@ test('Today uses the local calendar date and stable date-only coordinates across
   const nodes = [
     createNode('semester-range', { startDate: '2026-08-20', dueDate: '2027-01-20' }),
   ];
-  const scales: readonly TimelineScale[] = ['days', 'weeks', 'months', 'semester', 'fit'];
+  const dataDomain = createTimelineDataDomain(nodes, '2026-09-10');
+  const scales: readonly TimelineScale[] = ['weeks', 'months', 'semester', 'fit'];
   for (const scale of scales) {
-    const domain = createTimelineDomainForScale(nodes, scale, '2026-09-10');
+    const domain = createGanttTimelineDomain(nodes, dataDomain, scale, '2026-09-10');
     const position = timelineDatePositionPercent('2026-09-10', domain);
     assert.notEqual(position, null);
     assert.equal(
@@ -1615,18 +1620,95 @@ test('Today uses the local calendar date and stable date-only coordinates across
   }
 });
 
-test('Gantt zoom presets provide month, semester, and fit domains without date drift', () => {
-  const singleDate = [createNode('single', { dueDate: '2026-09-10' })];
-  const months = createTimelineDomainForScale(singleDate, 'months', '2026-09-10');
-  const semester = createTimelineDomainForScale(singleDate, 'semester', '2026-09-10');
+test('Gantt viewport zoom presets expose materially distinct time spans', () => {
+  const viewportWidth = 920;
 
-  assert.equal(months.dayCount, timelineMinimumDayCount('months'));
-  assert.ok(months.dayCount > 31 && months.dayCount <= 100);
-  assert.equal(semester.dayCount, timelineMinimumDayCount('semester'));
-  assert.ok(semester.dayCount >= 140 && semester.dayCount <= 160);
-  assert.equal(timelineScaleDayWidth('months'), '0.5rem');
-  assert.equal(timelineScaleDayWidth('semester'), '0.25rem');
-  assert.equal(timelineScaleDayWidth('fit'), '0rem');
+  assert.equal(timelineVisibleDayCount('weeks', 365), 42);
+  assert.equal(timelineVisibleDayCount('months', 365), 92);
+  assert.equal(timelineVisibleDayCount('semester', 365), 180);
+  assert.equal(timelineVisibleDayCount('fit', 365), 365);
+
+  const weeksWidth = timelineDayPixelWidth('weeks', viewportWidth, 365);
+  const monthsWidth = timelineDayPixelWidth('months', viewportWidth, 365);
+  const semesterWidth = timelineDayPixelWidth('semester', viewportWidth, 365);
+  assert.ok(weeksWidth > monthsWidth);
+  assert.ok(monthsWidth > semesterWidth);
+  assert.equal(monthsWidth, 10);
+  assert.equal(timelineContentPixelWidth('fit', viewportWidth, 365), viewportWidth);
+});
+
+test('non-fit Gantt scales retain the full data domain and make its end horizontally reachable', () => {
+  const nodes = [
+    createNode('year-range', { startDate: '2026-01-01', dueDate: '2026-12-31' }),
+    createNode('late-milestone', { type: 'milestone', dueDate: '2026-12-20' }),
+  ];
+  const viewportWidth = 900;
+  const dataDomain = createTimelineDataDomain(nodes, '2026-01-01');
+
+  for (const scale of ['weeks', 'months', 'semester'] as const) {
+    const domain = createGanttTimelineDomain(nodes, dataDomain, scale, '2026-01-01');
+    assert.deepEqual(domain, dataDomain);
+    assert.ok(timelineContentPixelWidth(scale, viewportWidth, domain.dayCount) > viewportWidth);
+    const lastDateOffset = timelineScrollOffsetForDate(
+      domain.endDate,
+      domain,
+      scale,
+      viewportWidth,
+    );
+    assert.notEqual(lastDateOffset, null);
+    assert.ok((lastDateOffset ?? 0) > 0);
+    assert.ok(
+      (lastDateOffset ?? Number.POSITIVE_INFINITY) <=
+        timelineContentPixelWidth(scale, viewportWidth, domain.dayCount) - viewportWidth,
+    );
+  }
+
+  const weeksDomain = createGanttTimelineDomain(nodes, dataDomain, 'weeks', '2026-01-01');
+  const overview = buildTimelineOverview(nodes, weeksDomain, 32, '2026-06-15');
+  assert.equal(overview.flatMap((item) => item.nodes).length, nodes.length);
+  assert.ok(
+    overview.some((item) => item.nodes.some((node) => node.id === 'late-milestone')),
+  );
+});
+
+test('Gantt zoom switches preserve today, viewport center, then earliest-item anchor priority', () => {
+  assert.equal(
+    selectTimelineZoomAnchor(
+      '2026-09-10',
+      '2026-09-01',
+      '2026-09-20',
+      '2026-09-11',
+      '2026-08-20',
+    ),
+    '2026-09-10',
+  );
+  assert.equal(
+    selectTimelineZoomAnchor(
+      '2026-09-10',
+      '2026-10-01',
+      '2026-10-20',
+      '2026-10-11',
+      '2026-08-20',
+    ),
+    '2026-10-11',
+  );
+  assert.equal(
+    selectTimelineZoomAnchor('2026-09-10', null, null, null, '2026-08-20'),
+    '2026-08-20',
+  );
+});
+
+test('fit uses the complete dated domain while overview coordinates remain full-domain', () => {
+  const singleDate = [createNode('single', { dueDate: '2026-09-10' })];
+  const singleDateDomain = createTimelineDataDomain(singleDate, '2026-09-10');
+  assert.equal(
+    createGanttTimelineDomain(singleDate, singleDateDomain, 'months', '2026-09-10').dayCount,
+    92,
+  );
+  assert.equal(
+    createGanttTimelineDomain(singleDate, singleDateDomain, 'semester', '2026-09-10').dayCount,
+    180,
+  );
 
   const dated = [
     createNode('range', { startDate: '2026-09-01', dueDate: '2026-09-10' }),
@@ -1634,7 +1716,13 @@ test('Gantt zoom presets provide month, semester, and fit domains without date d
     createNode('milestone', { type: 'milestone', dueDate: '2026-08-20' }),
   ];
   const unscheduled = createNode('unscheduled');
-  const fit = createTimelineDomainForScale([...dated, unscheduled], 'fit', '2026-09-10');
+  const dataDomain = createTimelineDataDomain([...dated, unscheduled], '2026-09-10');
+  const fit = createGanttTimelineDomain(
+    [...dated, unscheduled],
+    dataDomain,
+    'fit',
+    '2026-09-10',
+  );
   const fitWithoutUnscheduled = createFitTimelineDomain(dated, 7, '2026-09-10');
 
   assert.deepEqual(fit, fitWithoutUnscheduled);
@@ -1649,6 +1737,7 @@ test('Gantt zoom presets provide month, semester, and fit domains without date d
 
   const overview = buildTimelineOverview(dated, fit, fit.dayCount, '2026-09-10');
   assert.equal(overview.flatMap((item) => item.nodes).length, dated.length);
+  assert.ok(fit.dayCount > timelineVisibleDayCount('weeks', fit.dayCount));
   for (const item of overview.filter((candidate) => candidate.kind !== 'cluster')) {
     const node = item.nodes[0];
     assert.notEqual(node, undefined);

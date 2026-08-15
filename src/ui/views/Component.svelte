@@ -62,7 +62,7 @@
   let selectedSubjects = $state<string[]>([]);
   let priority = $state<'all' | 'high' | 'medium' | 'low'>('all');
   let viewMode = $state<'dashboard' | 'gantt' | 'horizon'>('dashboard');
-  let scale = $state<TimelineScale>('days');
+  let scale = $state<TimelineScale>('weeks');
   let scratchpadNode = $state<RoadmapNode | null>(null);
   let circularDependencyCycles = $state<readonly (readonly string[])[]>([]);
   let exportingCalendar = $state(false);
