@@ -292,8 +292,8 @@ class TaskMetadataWidget extends WidgetType {
     button.type = 'button';
     button.className = 'nr-task-metadata-action nr-task-properties-action';
     button.title = 'Task properties';
-    button.setAttribute('aria-label', 'Edit task properties');
-    setIcon(button, 'list-properties');
+    button.setAttribute('aria-label', 'Task properties');
+    setIcon(button, 'info');
     button.addEventListener('click', () => this.owner.openProperties(button, this.node));
     return button;
   }

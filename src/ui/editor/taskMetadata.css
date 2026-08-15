@@ -5,7 +5,7 @@
   box-sizing: border-box;
   align-items: center;
   flex-wrap: wrap;
-  gap: var(--size-2-2);
+  gap: var(--size-4-1);
   margin-block: var(--size-2-1) var(--size-4-1);
   margin-inline-start: calc(var(--checkbox-size) + var(--size-4-3));
   color: var(--text-muted);
@@ -17,7 +17,10 @@
 .markdown-source-view.mod-cm6.is-live-preview .nr-task-metadata-chip {
   display: inline-flex;
   max-width: 100%;
+  min-block-size: calc(var(--icon-size-s) + var(--size-4-2));
+  box-sizing: border-box;
   align-items: center;
+  justify-content: center;
   padding: var(--size-2-1) var(--size-4-1);
   overflow: hidden;
   border: var(--border-width) solid var(--background-modifier-border);
@@ -47,7 +50,74 @@
   border-color: var(--interactive-accent);
 }
 
-.nr-task-metadata-action,
+.nr-task-metadata-action {
+  display: inline-grid;
+  flex: 0 0 auto;
+  inline-size: calc(var(--icon-size-s) + var(--size-4-2));
+  block-size: calc(var(--icon-size-s) + var(--size-4-2));
+  min-inline-size: calc(var(--icon-size-s) + var(--size-4-2));
+  min-block-size: calc(var(--icon-size-s) + var(--size-4-2));
+  box-sizing: border-box;
+  place-items: center;
+  padding: var(--size-2-1);
+  border: var(--border-width) solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary-alt);
+  color: var(--text-muted);
+  box-shadow: none;
+  cursor: pointer;
+  line-height: var(--line-height-tight);
+  vertical-align: middle;
+}
+
+.nr-task-metadata-action:hover,
+.nr-task-metadata-action:focus-visible {
+  border-color: var(--interactive-accent);
+  background: var(--background-modifier-hover);
+  color: var(--interactive-accent);
+  outline: var(--border-width) solid var(--interactive-accent);
+  outline-offset: var(--border-width);
+}
+
+.nr-task-metadata-action svg {
+  width: calc(var(--icon-size-s) - var(--size-2-2));
+  height: calc(var(--icon-size-s) - var(--size-2-2));
+  stroke-width: var(--icon-stroke);
+}
+
+.nr-task-calendar-action.is-included,
+.nr-task-calendar-button.is-included {
+  color: var(--interactive-accent);
+}
+
+.nr-task-calendar-action.is-manual,
+.nr-task-calendar-button.is-manual {
+  border-color: var(--interactive-accent);
+}
+
+.nr-task-metadata-action:disabled {
+  cursor: not-allowed;
+  opacity: var(--icon-opacity);
+}
+
+.markdown-source-view.mod-cm6.is-live-preview .nr-task-properties-action {
+  border-radius: var(--radius-l);
+  background: transparent;
+  color: var(--text-faint);
+  opacity: var(--icon-opacity);
+  transition: opacity var(--anim-duration-fast) var(--anim-motion-swing);
+}
+
+.markdown-source-view.mod-cm6.is-live-preview .nr-task-metadata-row:hover .nr-task-properties-action,
+.markdown-source-view.mod-cm6.is-live-preview .nr-task-properties-action:focus-visible {
+  opacity: 1;
+}
+
+.markdown-source-view.mod-cm6.is-live-preview .nr-task-metadata-row.is-minimal {
+  justify-content: flex-start;
+  margin-block-start: 0;
+}
+
 .nr-task-icon-button {
   display: inline-grid;
   min-width: var(--clickable-icon-size);
@@ -62,8 +132,6 @@
   cursor: pointer;
 }
 
-.nr-task-metadata-action:hover,
-.nr-task-metadata-action:focus-visible,
 .nr-task-icon-button:hover,
 .nr-task-icon-button:focus-visible {
   border-color: var(--interactive-accent);
@@ -73,41 +141,14 @@
   outline-offset: var(--border-width);
 }
 
-.nr-task-metadata-action svg,
 .nr-task-icon-button svg {
   width: var(--icon-size-s);
   height: var(--icon-size-s);
 }
 
-.nr-task-calendar-action.is-included,
-.nr-task-calendar-button.is-included {
-  color: var(--interactive-accent);
-}
-
-.nr-task-calendar-action.is-manual,
-.nr-task-calendar-button.is-manual {
-  border-color: var(--interactive-accent);
-}
-
-.nr-task-metadata-action:disabled,
 .nr-task-icon-button:disabled {
   cursor: not-allowed;
   opacity: var(--icon-opacity);
-}
-
-.markdown-source-view.mod-cm6.is-live-preview .nr-task-properties-action {
-  opacity: var(--icon-opacity);
-  transition: opacity var(--anim-duration-fast) var(--anim-motion-swing);
-}
-
-.markdown-source-view.mod-cm6.is-live-preview .nr-task-metadata-row:hover .nr-task-properties-action,
-.markdown-source-view.mod-cm6.is-live-preview .nr-task-properties-action:focus-visible {
-  opacity: 1;
-}
-
-.markdown-source-view.mod-cm6.is-live-preview .nr-task-metadata-row.is-minimal {
-  justify-content: flex-end;
-  margin-block-start: 0;
 }
 
 .nr-task-properties-popover {
