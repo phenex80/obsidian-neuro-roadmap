@@ -16,7 +16,9 @@ Calendar is a one-way projection from the Markdown-backed roadmap. Exams, assign
 
 The Calendar toolbar menu distinguishes **Export current view** from **Export all eligible items**. Exported RFC 5545 files use stable UIDs, all-day deadline events with exclusive end dates, transparent availability, optional type-specific reminders, escaped Unicode text, and source links back to Obsidian.
 
-Inline tasks receive a compact Obsidian block ID only when a calendar operation first needs stable identity. Provider IDs and sync metadata remain in plugin-managed state. No Microsoft or Google network integration is performed in this release.
+Inline tasks receive a compact Obsidian block ID only when a calendar operation first needs stable identity. Provider IDs and sync metadata remain in plugin-managed state.
+
+On Obsidian desktop, the optional **Google Calendar** provider can project the same eligible items directly through the Google Calendar API. It uses installed-app OAuth with a loopback redirect and PKCE, writes only managed downstream events, and never imports Google edits into Markdown. Select an existing writable calendar or explicitly create `Neuro Roadmap`; automatic synchronization is debounced and **Sync now** performs a full remote verification. Generic ICS remains available without an account and on mobile. See [Google Calendar setup](docs/google-calendar-setup.md).
 
 ## Markdown data
 
