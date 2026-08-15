@@ -35,6 +35,8 @@ import {
   MicrosoftCalendarProvider,
   toMicrosoftGraphEvent,
 } from '../src/calendar/MicrosoftCalendarProvider';
+import { CalendarSyncEngine } from '../src/core/CalendarSyncEngine';
+import type { CalendarProvider } from '../src/core/CalendarProvider';
 import { buildSubjectSummaries } from '../src/core/DashboardMetrics';
 import { classifyHorizon, formatRelativeTaskDate } from '../src/core/HorizonPlanner';
 import { migrateRoadmapSettingsData } from '../src/core/SettingsMigration';
@@ -514,6 +516,111 @@ test('Microsoft provider refreshes once on 401, respects Retry-After, and treats
   assert.equal(await provider.eventExists({ calendarId: 'calendar', eventId: 'missing' }), false);
   await provider.deleteEvent({ calendarId: 'calendar', eventId: 'missing' });
   assert.equal(requests.length, 5);
+});
+
+test('Microsoft reconciliation preserves mapping across edits, restart, calendar switch, exclusion, and source deletion', async () => {
+  const settings = roadmapSettingsSchema.parse({});
+  let calendarId = 'calendar-a';
+  let identitySequence = 0;
+  let eventSequence = 0;
+  const remote = new Map<string, CalendarEventProjection>();
+  const operations: string[] = [];
+  const provider: CalendarProvider = {
+    id: 'microsoft',
+    displayName: 'Microsoft 365',
+    capabilities: {
+      export: false,
+      remoteCalendars: true,
+      create: true,
+      update: true,
+      delete: true,
+      reminders: true,
+    },
+    initialize: async () => ({ connected: true }),
+    listCalendars: async () => [],
+    createEvent: async (targetCalendarId, event) => {
+      const eventId = `event-${++eventSequence}`;
+      remote.set(eventId, event);
+      operations.push(`create:${targetCalendarId}:${eventId}`);
+      return { calendarId: targetCalendarId, eventId };
+    },
+    updateEvent: async (reference, event) => {
+      if (!remote.has(reference.eventId)) throw { kind: 'not-found' };
+      remote.set(reference.eventId, event);
+      operations.push(`update:${reference.eventId}`);
+    },
+    deleteEvent: async (reference) => {
+      remote.delete(reference.eventId);
+      operations.push(`delete:${reference.calendarId}:${reference.eventId}`);
+    },
+    eventExists: async (reference) => remote.has(reference.eventId),
+  };
+  const identities = new CalendarIdentityManager(
+    {} as App,
+    () => settings.calendarState.itemIdentities,
+    async (records) => { settings.calendarState.itemIdentities = records; },
+    () => `internal-${++identitySequence}`,
+  );
+  const createEngine = () => new CalendarSyncEngine(
+    identities,
+    provider,
+    () => ({
+      settings: settings.calendar,
+      state: settings.calendarState,
+      calendarId,
+      vaultName: 'Academic Vault',
+    }),
+    async (records) => { settings.calendarState.syncRecords = records; },
+    () => new Date('2026-08-15T12:00:00.000Z'),
+  );
+  const original = createNode('exam-source', {
+    source: 'frontmatter',
+    path: 'ISKB02/Exam.md',
+    calendarType: 'exam',
+    title: 'Original exam',
+    dueDate: '2026-12-10',
+  });
+
+  const initial = await createEngine().reconcile([original]);
+  const internalId = Object.values(settings.calendarState.itemIdentities)[0];
+  const firstRecord = Object.values(settings.calendarState.syncRecords)[0];
+  assert.equal(initial.created, 1);
+  assert.equal(internalId, 'internal-1');
+  assert.equal(firstRecord?.externalEventId, 'event-1');
+
+  const changed = { ...original, title: 'Renamed exam', dueDate: '2026-12-12' };
+  const edited = await createEngine().reconcile([changed]);
+  assert.equal(edited.updated, 1);
+  assert.equal(Object.values(settings.calendarState.syncRecords)[0]?.externalEventId, 'event-1');
+  assert.equal(remote.get('event-1')?.title, 'Renamed exam');
+
+  const afterRestart = await createEngine().reconcile([changed], { verifyRemote: true });
+  assert.equal(afterRestart.unchanged, 1);
+  assert.equal(eventSequence, 1);
+
+  remote.delete('event-1');
+  const repaired = await createEngine().reconcile([changed], { verifyRemote: true });
+  assert.equal(repaired.recreated, 1);
+  assert.equal(Object.values(settings.calendarState.syncRecords)[0]?.externalEventId, 'event-2');
+
+  calendarId = 'calendar-b';
+  const moved = await createEngine().reconcile([changed]);
+  assert.equal(moved.deleted, 1);
+  assert.equal(moved.created, 1);
+  assert.equal(Object.values(settings.calendarState.syncRecords)[0]?.externalCalendarId, 'calendar-b');
+
+  settings.calendarState.itemOverrides[internalId ?? ''] = 'exclude';
+  const excluded = await createEngine().reconcile([changed]);
+  assert.equal(excluded.deleted, 1);
+  assert.deepEqual(settings.calendarState.syncRecords, {});
+
+  delete settings.calendarState.itemOverrides[internalId ?? ''];
+  await createEngine().reconcile([changed]);
+  const removedSource = await createEngine().reconcile([]);
+  assert.equal(removedSource.deleted, 1);
+  assert.deepEqual(settings.calendarState.syncRecords, {});
+  assert.ok(operations.includes('update:event-1'));
+  assert.ok(operations.some((operation) => operation.startsWith('delete:calendar-a:', 0)));
 });
 
 test('roadmap anchor notes contribute inline tasks but are not task nodes', () => {
