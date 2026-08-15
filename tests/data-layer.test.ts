@@ -30,6 +30,7 @@ import {
   GoogleAuthClient,
   GoogleAuthError,
 } from '../src/calendar/GoogleAuth';
+import { startGoogleLoopbackServer } from '../src/calendar/GoogleLoopbackServer';
 import type {
   CalendarHttpRequest,
   CalendarHttpResponse,
@@ -227,6 +228,12 @@ test('calendar sync state remains plugin-managed and defaults empty', () => {
   assert.deepEqual(settings.calendarState.itemIdentities, {});
   assert.deepEqual(settings.calendarState.itemOverrides, {});
   assert.deepEqual(settings.calendarState.syncRecords, {});
+  assert.deepEqual(settings.calendarState.google, {});
+  assert.deepEqual(settings.calendar.google, {
+    clientId: '',
+    autoSync: true,
+    debounceMs: 2_000,
+  });
 });
 
 test('ICS provider emits stable RFC 5545 all-day events with reminders', () => {
@@ -312,6 +319,34 @@ test('Google installed-app authorization uses loopback PKCE and required scopes'
   assert.deepEqual(url.searchParams.get('scope')?.split(' '), [...GOOGLE_CALENDAR_SCOPES]);
 });
 
+test('Google loopback receiver binds only to 127.0.0.1 and accepts one OAuth response', async (context) => {
+  let loopback: Awaited<ReturnType<typeof startGoogleLoopbackServer>>;
+  try {
+    loopback = await startGoogleLoopbackServer(2_000);
+  } catch (error) {
+    if (isSystemErrorCode(error, 'EPERM')) {
+      context.skip('The execution sandbox forbids binding a loopback listener.');
+      return;
+    }
+    throw error;
+  }
+  const redirect = new URL(loopback.redirectUri);
+  assert.equal(redirect.hostname, '127.0.0.1');
+  assert.equal(redirect.pathname, '/');
+  assert.ok(Number(redirect.port) > 0);
+
+  redirect.searchParams.set('state', 'expected-state');
+  redirect.searchParams.set('code', 'authorization-code');
+  const browserResponse = await fetch(redirect);
+  assert.equal(browserResponse.status, 200);
+  assert.match(await browserResponse.text(), /return to Obsidian/u);
+  assert.deepEqual(await loopback.response, {
+    state: 'expected-state',
+    code: 'authorization-code',
+    error: null,
+  });
+});
+
 test('Google authorization validates state and stores refresh tokens outside settings', async () => {
   const secrets = new Map<string, string>();
   const transport = new QueueCalendarTransport([
@@ -351,6 +386,57 @@ test('Google authorization validates state and stores refresh tokens outside set
   assert.match(transport.requests[0]?.body ?? '', /code_verifier=/u);
 });
 
+test('Google reconnect keeps the previous refresh token until account validation succeeds', async () => {
+  const secrets = new Map([['google-token', 'previous-refresh-token']]);
+  const transport = new QueueCalendarTransport([
+    jsonResponse(200, {
+      access_token: 'new-access-token',
+      refresh_token: 'pending-refresh-token',
+      expires_in: 3600,
+      scope: GOOGLE_CALENDAR_SCOPES.join(' '),
+    }),
+  ]);
+  const client = new GoogleAuthClient(transport, createSecretStore(secrets));
+  const configuration = {
+    clientId: 'desktop-client.apps.googleusercontent.com',
+    refreshTokenSecretId: 'google-token',
+  };
+  const session = await client.beginAuthorization(
+    configuration,
+    'http://127.0.0.1:49152/oauth2/callback',
+  );
+  await client.completeAuthorization(configuration, session, {
+    state: session.state,
+    code: 'authorization-code',
+    error: null,
+  }, false);
+
+  assert.equal(secrets.get('google-token'), 'previous-refresh-token');
+  client.discardPendingAuthorization();
+  assert.equal(secrets.get('google-token'), 'previous-refresh-token');
+
+  const secondClient = new GoogleAuthClient(
+    new QueueCalendarTransport([jsonResponse(200, {
+      access_token: 'accepted-access-token',
+      refresh_token: 'accepted-refresh-token',
+      expires_in: 3600,
+      scope: GOOGLE_CALENDAR_SCOPES.join(' '),
+    })]),
+    createSecretStore(secrets),
+  );
+  const secondSession = await secondClient.beginAuthorization(
+    configuration,
+    'http://127.0.0.1:49153/oauth2/callback',
+  );
+  await secondClient.completeAuthorization(configuration, secondSession, {
+    state: secondSession.state,
+    code: 'authorization-code',
+    error: null,
+  }, false);
+  secondClient.commitPendingAuthorization(configuration);
+  assert.equal(secrets.get('google-token'), 'accepted-refresh-token');
+});
+
 test('Google refresh, revocation, and revoked-grant errors preserve secure lifecycle', async () => {
   const secrets = new Map([['google-token', 'refresh-token']]);
   const transport = new QueueCalendarTransport([
@@ -382,6 +468,14 @@ test('Google refresh, revocation, and revoked-grant errors preserve secure lifec
     revoked.getAccessToken(configuration),
     (error: unknown) => error instanceof GoogleAuthError && error.kind === 'authentication-expired',
   );
+
+  const alreadyRevokedSecrets = new Map([['google-token', 'already-revoked-token']]);
+  const alreadyRevoked = new GoogleAuthClient(
+    new QueueCalendarTransport([jsonResponse(400, { error: 'invalid_token' })]),
+    createSecretStore(alreadyRevokedSecrets),
+  );
+  await alreadyRevoked.disconnect(configuration);
+  assert.equal(alreadyRevokedSecrets.get('google-token'), '');
 });
 
 test('Google provider maps Calendar Core all-day, free, reminder, and Unicode semantics', async () => {
@@ -1260,6 +1354,10 @@ function createSecretStore(values = new Map<string, string>()) {
       values.set(id, value);
     },
   };
+}
+
+function isSystemErrorCode(error: unknown, code: string): boolean {
+  return error !== null && typeof error === 'object' && 'code' in error && error.code === code;
 }
 
 function createGoogleProvider(

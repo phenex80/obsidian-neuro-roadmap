@@ -77,6 +77,7 @@ interface TokenResponse {
 /** Installed-app OAuth client using loopback redirects and PKCE S256 without a client secret. */
 export class GoogleAuthClient {
   private cachedToken: GoogleTokenSet | null = null;
+  private pendingRefreshToken: string | null = null;
 
   constructor(
     private readonly transport: CalendarHttpTransport,
@@ -116,6 +117,7 @@ export class GoogleAuthClient {
     configuration: GoogleAuthConfiguration,
     session: GoogleAuthorizationSession,
     response: GoogleAuthorizationResponse,
+    persistRefreshToken = true,
   ): Promise<GoogleTokenSet> {
     validateConfiguration(configuration);
     if (response.state === null || !constantTimeEqual(response.state, session.state)) {
@@ -142,7 +144,12 @@ export class GoogleAuthClient {
     if (tokenResponse.status < 200 || tokenResponse.status >= 300) {
       throw authEndpointError(tokenResponse, 'Unable to complete Google authorization.');
     }
-    return this.acceptTokenResponse(configuration, tokenResponse.json, true);
+    return this.acceptTokenResponse(
+      configuration,
+      tokenResponse.json,
+      true,
+      persistRefreshToken,
+    );
   }
 
   async getAccessToken(configuration: GoogleAuthConfiguration): Promise<string> {
@@ -193,14 +200,37 @@ export class GoogleAuthClient {
         );
       }
       if (response.status < 200 || response.status >= 300) {
+        const errorCode = oauthErrorCode(response.json);
+        if (
+          response.status === 400 &&
+          (errorCode === 'invalid_token' || errorCode === 'invalid_grant')
+        ) {
+          this.forgetLocalToken(configuration);
+          return;
+        }
         throw authEndpointError(response, 'Google token revocation failed.');
       }
     }
     this.forgetLocalToken(configuration);
   }
 
+  commitPendingAuthorization(configuration: GoogleAuthConfiguration): void {
+    validateConfiguration(configuration);
+    if (this.pendingRefreshToken === null) {
+      throw new GoogleAuthError('not-connected', 'No completed Google authorization is pending.');
+    }
+    this.secrets.setSecret(configuration.refreshTokenSecretId, this.pendingRefreshToken);
+    this.pendingRefreshToken = null;
+  }
+
+  discardPendingAuthorization(): void {
+    this.cachedToken = null;
+    this.pendingRefreshToken = null;
+  }
+
   forgetLocalToken(configuration: GoogleAuthConfiguration): void {
     this.cachedToken = null;
+    this.pendingRefreshToken = null;
     if (configuration.refreshTokenSecretId.length > 0) {
       this.secrets.setSecret(configuration.refreshTokenSecretId, '');
     }
@@ -224,6 +254,7 @@ export class GoogleAuthClient {
     configuration: GoogleAuthConfiguration,
     value: unknown,
     requireRefreshToken: boolean,
+    persistRefreshToken = true,
   ): GoogleTokenSet {
     const response = parseTokenResponse(value);
     if (requireRefreshToken && response.refresh_token === undefined) {
@@ -241,7 +272,12 @@ export class GoogleAuthClient {
       );
     }
     if (response.refresh_token !== undefined) {
-      this.secrets.setSecret(configuration.refreshTokenSecretId, response.refresh_token);
+      if (persistRefreshToken) {
+        this.secrets.setSecret(configuration.refreshTokenSecretId, response.refresh_token);
+        this.pendingRefreshToken = null;
+      } else {
+        this.pendingRefreshToken = response.refresh_token;
+      }
     }
     this.cachedToken = {
       accessToken: response.access_token,

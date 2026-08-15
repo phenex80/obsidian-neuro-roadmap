@@ -1,7 +1,7 @@
-import { createServer, type Server } from 'node:http';
+import type { Server } from 'node:http';
 import type { GoogleAuthorizationResponse } from './GoogleAuth';
 
-const CALLBACK_PATH = '/oauth2/callback';
+const CALLBACK_PATH = '/';
 const DEFAULT_TIMEOUT_MS = 5 * 60_000;
 
 export interface GoogleLoopbackSession {
@@ -14,7 +14,8 @@ export interface GoogleLoopbackSession {
 export async function startGoogleLoopbackServer(
   timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<GoogleLoopbackSession> {
-  let timeout: number | undefined;
+  const { createServer } = await import('node:http');
+  let timeout: ReturnType<typeof globalThis.setTimeout> | undefined;
   let settled = false;
   let resolveResponse: (value: GoogleAuthorizationResponse) => void = () => undefined;
   let rejectResponse: (reason: unknown) => void = () => undefined;
@@ -47,19 +48,26 @@ export async function startGoogleLoopbackServer(
       error: requestUrl.searchParams.get('error'),
     });
   });
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error): void => {
+      server?.off('listening', onListening);
+      settled = true;
+      reject(error);
+    };
+    const onListening = (): void => {
+      server?.off('error', onError);
+      resolve();
+    };
+    server?.once('error', onError);
+    server?.once('listening', onListening);
+    server?.listen(0, '127.0.0.1');
+  });
+
   server.once('error', (error) => {
     if (!settled) {
       settled = true;
       rejectResponse(error);
     }
-  });
-
-  await new Promise<void>((resolve, reject) => {
-    if (server === null) {
-      reject(new Error('Google OAuth callback server could not be created.'));
-      return;
-    }
-    server.listen(0, '127.0.0.1', resolve);
   });
 
   if (server === null) {
@@ -72,12 +80,16 @@ export async function startGoogleLoopbackServer(
   }
 
   const close = (): void => {
-    if (timeout !== undefined) window.clearTimeout(timeout);
+    if (!settled) {
+      settled = true;
+      rejectResponse(new Error('Google authorization was cancelled.'));
+    }
+    if (timeout !== undefined) globalThis.clearTimeout(timeout);
     timeout = undefined;
     server?.close();
     server = null;
   };
-  timeout = window.setTimeout(() => {
+  timeout = globalThis.setTimeout(() => {
     if (!settled) {
       settled = true;
       rejectResponse(new Error('Google authorization timed out. Start Connect again.'));

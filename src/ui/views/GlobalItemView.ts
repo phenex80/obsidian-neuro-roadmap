@@ -4,6 +4,7 @@ import Component from './Component.svelte';
 import type NeuroAdaptiveRoadmapPlugin from '../../main';
 import type { RoadmapSettings } from '../../types';
 import type { CalendarItemOverride, RoadmapNode } from '../../types';
+import type { CalendarSyncRuntimeStatus } from '../../core/CalendarSyncController';
 
 export const VIEW_TYPE_NEURO_ROADMAP = 'neuro-adaptive-roadmap';
 
@@ -43,6 +44,12 @@ export class GlobalItemView extends ItemView {
         setCalendarOverride: (node: RoadmapNode, override: CalendarItemOverride | null) =>
           this.plugin.setCalendarOverride(node, override),
         exportCalendar: (nodes: readonly RoadmapNode[]) => this.plugin.exportCalendar(nodes),
+        calendarSyncProviderLabel: 'Google Calendar',
+        isCalendarSyncAvailable: () => this.plugin.isCalendarSyncAvailable(),
+        getLastCalendarSyncAt: () => this.plugin.getLastCalendarSyncAt(),
+        syncCalendar: () => this.plugin.syncGoogleCalendar(),
+        subscribeCalendarSyncStatus: (listener: (status: CalendarSyncRuntimeStatus) => void) =>
+          this.plugin.subscribeCalendarSyncStatus(listener),
       },
     });
   }

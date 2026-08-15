@@ -1,4 +1,4 @@
-import { App, Modal, Plugin, PluginSettingTab, Setting, TFile } from 'obsidian';
+import { App, Modal, Platform, Plugin, PluginSettingTab, Setting, TFile } from 'obsidian';
 import {
   CANONICAL_PROPERTY_FIELDS,
   PRIORITIES,
@@ -29,6 +29,27 @@ import { compileSourceScope, hasValidSourceScopeRules } from './core/SourceScope
 import { CalendarIdentityManager } from './core/CalendarIdentity';
 import { CalendarExportService, type CalendarExportResult } from './core/CalendarExportService';
 import { IcsCalendarProvider } from './calendar/IcsCalendarProvider';
+import {
+  GoogleAuthClient,
+  GoogleAuthError,
+  type GoogleAuthConfiguration,
+  type GoogleAuthorizationSession,
+} from './calendar/GoogleAuth';
+import { ObsidianCalendarHttpTransport } from './calendar/CalendarHttpTransport';
+import {
+  GoogleCalendarError,
+  GoogleCalendarProvider,
+} from './calendar/GoogleCalendarProvider';
+import {
+  startGoogleLoopbackServer,
+  type GoogleLoopbackSession,
+} from './calendar/GoogleLoopbackServer';
+import type { CalendarDescriptor } from './core/CalendarProvider';
+import { CalendarSyncEngine, type CalendarSyncReport } from './core/CalendarSyncEngine';
+import {
+  CalendarSyncController,
+  type CalendarSyncRuntimeStatus,
+} from './core/CalendarSyncController';
 import {
   migrateRoadmapSettingsData,
   withoutRoadmapTemplateValue,
@@ -80,7 +101,43 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     this.calendarIdentity,
     new IcsCalendarProvider(),
   );
+  private readonly calendarTransport = new ObsidianCalendarHttpTransport();
+  readonly googleAuth = new GoogleAuthClient(
+    this.calendarTransport,
+    {
+      getSecret: (id) => this.app.secretStorage.getSecret(id),
+      setSecret: (id, secret) => this.app.secretStorage.setSecret(id, secret),
+    },
+  );
+  readonly googleProvider = new GoogleCalendarProvider(
+    () => this.getGoogleAuthConfiguration(),
+    this.googleAuth,
+    this.calendarTransport,
+  );
+  readonly googleSyncEngine = new CalendarSyncEngine(
+    this.calendarIdentity,
+    this.googleProvider,
+    () => ({
+      settings: this.settings.calendar,
+      state: this.settings.calendarState,
+      calendarId: this.settings.calendarState.google.selectedCalendarId ?? '',
+      vaultName: this.app.vault.getName(),
+    }),
+    async (syncRecords) => {
+      this.settings.calendarState.syncRecords = syncRecords;
+      await this.saveSettings(false, false);
+    },
+  );
+  readonly googleSyncController = new CalendarSyncController(
+    (nodes, options) => this.googleSyncEngine.reconcile(nodes, options),
+    () => this.settings.calendar.google.debounceMs,
+    (report) => this.recordGoogleSyncSuccess(report),
+    (error) => this.recordGoogleSyncError(error),
+  );
   private readonly settingsListeners = new Set<SettingsListener>();
+  private googleCalendars: readonly CalendarDescriptor[] = [];
+  private activeGoogleAuthModal: GoogleAuthorizationModal | null = null;
+  private activeGoogleLoopback: GoogleLoopbackSession | null = null;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -89,6 +146,15 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     this.scheduler.setCreationPropertyKeys(parserOptions.propertyKeys);
     await this.indexer.initialize();
     this.indexer.registerEvents((eventRef) => this.registerEvent(eventRef));
+    const unsubscribeGoogleSync = this.indexer.subscribe((nodes) => {
+      if (this.shouldAutoSyncGoogle()) {
+        this.googleSyncController.schedule(nodes);
+      }
+    });
+    this.register(unsubscribeGoogleSync);
+    if (this.shouldAutoSyncGoogle()) {
+      void this.googleSyncController.syncNow(this.indexer.getNodes()).catch(() => undefined);
+    }
     this.registerEvent(
       this.app.vault.on('rename', (file, oldPath) => {
         if (file instanceof TFile && file.extension.toLocaleLowerCase() === 'md') {
@@ -112,6 +178,11 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
   }
 
   onunload(): void {
+    this.activeGoogleAuthModal?.close();
+    this.activeGoogleAuthModal = null;
+    this.activeGoogleLoopback?.close();
+    this.activeGoogleLoopback = null;
+    this.googleSyncController.dispose();
     this.settingsListeners.clear();
     this.indexer.clear();
   }
@@ -125,7 +196,7 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     );
   }
 
-  async saveSettings(rebuildIndex = false): Promise<void> {
+  async saveSettings(rebuildIndex = false, scheduleCalendarSync = true): Promise<void> {
     this.settings.excludedTemplateValues = withoutRoadmapTemplateValue(
       this.settings.excludedTemplateValues,
     );
@@ -139,6 +210,9 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     }
     for (const listener of this.settingsListeners) {
       listener(this.settings);
+    }
+    if (scheduleCalendarSync && this.shouldAutoSyncGoogle()) {
+      this.googleSyncController.schedule(this.indexer.getNodes());
     }
   }
 
@@ -181,6 +255,193 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     });
   }
 
+  subscribeCalendarSyncStatus(
+    listener: (status: CalendarSyncRuntimeStatus) => void,
+  ): () => void {
+    return this.googleSyncController.subscribe(listener);
+  }
+
+  isGoogleConnected(): boolean {
+    const configuration = this.getGoogleAuthConfiguration();
+    return configuration.clientId.length > 0 && this.googleAuth.hasRefreshToken(configuration);
+  }
+
+  isCalendarSyncAvailable(): boolean {
+    return this.isGoogleConnected() && this.settings.calendarState.google.selectedCalendarId !== undefined;
+  }
+
+  getLastCalendarSyncAt(): string | undefined {
+    return this.settings.calendarState.google.lastSyncAt;
+  }
+
+  getGoogleCalendars(): readonly CalendarDescriptor[] {
+    return this.googleCalendars.map((calendar) => ({ ...calendar }));
+  }
+
+  async connectGoogle(): Promise<boolean> {
+    if (!Platform.isDesktopApp) {
+      await this.recordGoogleSyncError(new Error(
+        'Direct Google Calendar connection requires the Obsidian desktop app. Use ICS export on mobile.',
+      ));
+      return false;
+    }
+
+    try {
+      const configuration = await this.ensureGoogleAuthConfiguration();
+      this.activeGoogleLoopback?.close();
+      const loopback = await startGoogleLoopbackServer();
+      this.activeGoogleLoopback = loopback;
+      const session = await this.googleAuth.beginAuthorization(configuration, loopback.redirectUri);
+      const result = await this.openGoogleAuthorizationModal(configuration, session, loopback);
+      if (!result.authenticated) {
+        this.googleAuth.discardPendingAuthorization();
+        if (result.error !== undefined) throw result.error;
+        return false;
+      }
+
+      const profile = await this.googleProvider.getAccountProfile();
+      const previousAccountId = this.settings.calendarState.google.accountId;
+      const hasExistingMappings = Object.values(this.settings.calendarState.syncRecords)
+        .some((record) => record.provider === this.googleProvider.id);
+      if (
+        previousAccountId !== undefined &&
+        previousAccountId !== profile.id &&
+        hasExistingMappings
+      ) {
+        this.googleAuth.discardPendingAuthorization();
+        await this.recordGoogleSyncError(new Error(
+          'A different Google account was used. Reconnect the original account to preserve existing event mappings.',
+        ));
+        return false;
+      }
+
+      if (previousAccountId !== undefined && previousAccountId !== profile.id) {
+        delete this.settings.calendarState.google.selectedCalendarId;
+        delete this.settings.calendarState.google.selectedCalendarName;
+        delete this.settings.calendarState.google.lastSyncAt;
+      }
+
+      this.googleAuth.commitPendingAuthorization(configuration);
+      this.settings.calendarState.google.accountId = profile.id;
+      this.settings.calendarState.google.accountDisplayName = profile.displayName;
+      this.settings.calendarState.google.accountEmail = profile.email;
+      delete this.settings.calendarState.google.lastSyncError;
+      await this.saveSettings(false, false);
+      await this.refreshGoogleCalendars();
+      return true;
+    } catch (error) {
+      this.googleAuth.discardPendingAuthorization();
+      await this.recordGoogleSyncError(error);
+      return false;
+    } finally {
+      this.activeGoogleLoopback?.close();
+      this.activeGoogleLoopback = null;
+    }
+  }
+
+  async disconnectGoogle(): Promise<boolean> {
+    try {
+      await this.googleAuth.disconnect(this.getGoogleAuthConfiguration());
+      this.googleCalendars = [];
+      await this.saveSettings(false, false);
+      return true;
+    } catch (error) {
+      await this.recordGoogleSyncError(error);
+      return false;
+    }
+  }
+
+  async refreshGoogleCalendars(): Promise<readonly CalendarDescriptor[]> {
+    try {
+      this.googleCalendars = await this.googleProvider.listCalendars();
+      const selectedId = this.settings.calendarState.google.selectedCalendarId;
+      if (
+        selectedId !== undefined &&
+        !this.googleCalendars.some((calendar) => calendar.id === selectedId)
+      ) {
+        await this.recordGoogleSyncError(new Error(
+          'The selected Google calendar no longer exists or is no longer writable. Select another calendar.',
+        ));
+      }
+      return this.getGoogleCalendars();
+    } catch (error) {
+      await this.recordGoogleSyncError(error);
+      return [];
+    }
+  }
+
+  async createGoogleCalendar(name = 'Neuro Roadmap'): Promise<boolean> {
+    try {
+      const createCalendar = this.googleProvider.createCalendar;
+      if (createCalendar === undefined) {
+        throw new Error('Google Calendar creation is unavailable.');
+      }
+      const calendar = await createCalendar.call(this.googleProvider, name);
+      this.googleCalendars = [
+        ...this.googleCalendars.filter((candidate) => candidate.id !== calendar.id),
+        calendar,
+      ];
+      return this.selectGoogleCalendar(calendar.id);
+    } catch (error) {
+      await this.recordGoogleSyncError(error);
+      return false;
+    }
+  }
+
+  async selectGoogleCalendar(calendarId: string): Promise<boolean> {
+    const calendar = this.googleCalendars.find((candidate) => candidate.id === calendarId);
+    if (calendar === undefined) {
+      await this.recordGoogleSyncError(new Error(
+        'Refresh the Google calendar list and select a writable calendar.',
+      ));
+      return false;
+    }
+    const previousId = this.settings.calendarState.google.selectedCalendarId;
+    if (previousId !== undefined && previousId !== calendar.id) {
+      try {
+        await this.googleSyncEngine.releaseCalendar(previousId);
+      } catch (error) {
+        await this.recordGoogleSyncError(error);
+        return false;
+      }
+    }
+    this.settings.calendarState.google.selectedCalendarId = calendar.id;
+    this.settings.calendarState.google.selectedCalendarName = calendar.name;
+    delete this.settings.calendarState.google.lastSyncError;
+    await this.saveSettings(false, false);
+    if (this.settings.calendar.google.autoSync) {
+      try {
+        await this.syncGoogleCalendar();
+      } catch {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  async syncGoogleCalendar(): Promise<CalendarSyncReport> {
+    if (!this.isGoogleConnected()) {
+      throw new Error('Connect Google Calendar before synchronization.');
+    }
+    if (this.settings.calendarState.google.selectedCalendarId === undefined) {
+      throw new Error('Select a Google calendar before synchronization.');
+    }
+    return this.googleSyncController.syncNow(this.indexer.getNodes());
+  }
+
+  getGoogleConnectionLabel(): string {
+    const error = this.settings.calendarState.google.lastSyncError;
+    if (!this.isGoogleConnected()) {
+      return error === undefined ? 'Not connected' : `Not connected · ${error}`;
+    }
+    if (error !== undefined && isAuthenticationErrorMessage(error)) {
+      return `Authentication expired/error: ${error}`;
+    }
+    const account = this.settings.calendarState.google.accountEmail
+      ?? this.settings.calendarState.google.accountDisplayName;
+    return account === undefined ? 'Connected (not yet verified)' : `Connected as ${account}`;
+  }
+
   getParserOptions(): RoadmapParserOptions {
     return {
       propertyKeys: compilePropertyKeyMap(this.settings.propertyMappings),
@@ -201,6 +462,72 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     const leaf = existingLeaf ?? this.app.workspace.getLeaf('tab');
     await leaf.setViewState({ type: VIEW_TYPE_NEURO_ROADMAP, active: true });
     await this.app.workspace.revealLeaf(leaf);
+  }
+
+  private getGoogleAuthConfiguration(): GoogleAuthConfiguration {
+    return {
+      clientId: this.settings.calendar.google.clientId,
+      refreshTokenSecretId: this.settings.calendarState.google.refreshTokenSecretId ?? '',
+    };
+  }
+
+  private async ensureGoogleAuthConfiguration(): Promise<GoogleAuthConfiguration> {
+    if (this.settings.calendarState.google.refreshTokenSecretId === undefined) {
+      this.settings.calendarState.google.refreshTokenSecretId =
+        `neuro-roadmap-google-${crypto.randomUUID().replaceAll('-', '')}`;
+      await this.saveSettings(false, false);
+    }
+    return this.getGoogleAuthConfiguration();
+  }
+
+  private shouldAutoSyncGoogle(): boolean {
+    return (
+      this.settings.calendar.google.autoSync &&
+      this.settings.calendarState.google.selectedCalendarId !== undefined &&
+      this.isGoogleConnected()
+    );
+  }
+
+  private async recordGoogleSyncSuccess(report: CalendarSyncReport): Promise<void> {
+    this.settings.calendarState.google.lastSyncAt = report.completedAt;
+    delete this.settings.calendarState.google.lastSyncError;
+    await this.saveSettings(false, false);
+  }
+
+  private async recordGoogleSyncError(error: unknown): Promise<void> {
+    this.settings.calendarState.google.lastSyncError = safeGoogleErrorMessage(error);
+    await this.saveSettings(false, false);
+  }
+
+  private openGoogleAuthorizationModal(
+    configuration: GoogleAuthConfiguration,
+    session: GoogleAuthorizationSession,
+    loopback: GoogleLoopbackSession,
+  ): Promise<GoogleAuthorizationResult> {
+    return new Promise((resolve) => {
+      const modal = new GoogleAuthorizationModal(
+        this.app,
+        session.authorizationUrl,
+        async () => {
+          const response = await loopback.response;
+          await this.googleAuth.completeAuthorization(
+            configuration,
+            session,
+            response,
+            false,
+          );
+        },
+        (result) => {
+          if (this.activeGoogleAuthModal === modal) {
+            this.activeGoogleAuthModal = null;
+          }
+          resolve(result);
+        },
+      );
+      this.activeGoogleAuthModal?.close();
+      this.activeGoogleAuthModal = modal;
+      modal.open();
+    });
   }
 }
 
@@ -437,6 +764,8 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
       this.addCalendarReminderSettings(containerEl);
     }
 
+    this.addGoogleCalendarSettings(containerEl);
+
     containerEl.createEl('h3', { text: 'Colors' });
     this.addColorSettings(containerEl, this.plugin.settings.colors);
   }
@@ -576,7 +905,7 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
     for (const type of Object.keys(CALENDAR_TYPE_LABELS) as CalendarSemanticType[]) {
       new Setting(containerEl)
         .setName(`${CALENDAR_TYPE_LABELS[type]} reminder`)
-        .setDesc('Reminder timing for exported calendar events of this type.')
+        .setDesc('Reminder timing for projected calendar events of this type.')
         .addDropdown((dropdown) => {
           for (const [value, label] of options) {
             dropdown.addOption(value, label);
@@ -591,6 +920,146 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
             });
         });
     }
+  }
+
+  private addGoogleCalendarSettings(containerEl: HTMLElement): void {
+    containerEl.createEl('h3', { text: 'Google Calendar' });
+    containerEl.createEl('p', {
+      text: Platform.isDesktopApp
+        ? 'One-way sync only: Markdown owns managed events. Google Calendar edits are never written back to the vault.'
+        : 'Direct Google Calendar sync requires Obsidian desktop. ICS export remains available on mobile.',
+      cls: 'setting-item-description',
+    });
+
+    new Setting(containerEl)
+      .setName('Provider')
+      .setDesc('Google Calendar API through desktop installed-app OAuth with PKCE.')
+      .addText((text) => text.setValue('Google Calendar').setDisabled(true));
+
+    new Setting(containerEl)
+      .setName('OAuth client ID')
+      .setDesc('Desktop OAuth client ID from Google Cloud. No client secret is used or accepted.')
+      .addText((text) =>
+        text
+          .setPlaceholder('000000000000-example.apps.googleusercontent.com')
+          .setValue(this.plugin.settings.calendar.google.clientId)
+          .setDisabled(this.plugin.isGoogleConnected())
+          .onChange(async (value) => {
+            this.plugin.settings.calendar.google.clientId = value.trim();
+            await this.plugin.saveSettings(false, false);
+          }),
+      );
+
+    const connection = new Setting(containerEl)
+      .setName('Connection')
+      .setDesc(this.plugin.getGoogleConnectionLabel());
+    if (this.plugin.isGoogleConnected()) {
+      connection
+        .addButton((button) =>
+          button
+            .setButtonText('Reconnect')
+            .setDisabled(!Platform.isDesktopApp)
+            .onClick(async () => {
+              await this.plugin.connectGoogle();
+              this.display();
+            }),
+        )
+        .addButton((button) =>
+          button.setButtonText('Disconnect').setWarning().onClick(async () => {
+            await this.plugin.disconnectGoogle();
+            this.display();
+          }),
+        );
+    } else {
+      connection.addButton((button) =>
+        button
+          .setButtonText('Connect')
+          .setCta()
+          .setDisabled(!Platform.isDesktopApp || this.plugin.settings.calendar.google.clientId.length === 0)
+          .onClick(async () => {
+            await this.plugin.connectGoogle();
+            this.display();
+          }),
+      );
+    }
+
+    if (!this.plugin.isGoogleConnected()) return;
+
+    const calendars = this.plugin.getGoogleCalendars();
+    const selectedCalendarId = this.plugin.settings.calendarState.google.selectedCalendarId;
+    const selectedCalendarName = this.plugin.settings.calendarState.google.selectedCalendarName;
+    new Setting(containerEl)
+      .setName('Calendar')
+      .setDesc('Choose an existing writable calendar. Read-only calendars are not listed.')
+      .addDropdown((dropdown) => {
+        dropdown.addOption('', calendars.length === 0 ? 'Refresh calendars…' : 'Select calendar…');
+        if (
+          selectedCalendarId !== undefined &&
+          !calendars.some((calendar) => calendar.id === selectedCalendarId)
+        ) {
+          dropdown.addOption(selectedCalendarId, selectedCalendarName ?? 'Previously selected calendar');
+        }
+        for (const calendar of calendars) {
+          dropdown.addOption(calendar.id, calendar.primary ? `${calendar.name} (primary)` : calendar.name);
+        }
+        dropdown.setValue(selectedCalendarId ?? '').onChange(async (value) => {
+          if (value.length > 0) await this.plugin.selectGoogleCalendar(value);
+          this.display();
+        });
+      })
+      .addButton((button) =>
+        button.setButtonText('Refresh list').onClick(async () => {
+          await this.plugin.refreshGoogleCalendars();
+          this.display();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName('Dedicated calendar')
+      .setDesc('Creates “Neuro Roadmap” only after this explicit action, then selects it for sync.')
+      .addButton((button) =>
+        button.setButtonText('Create and select').onClick(async () => {
+          await this.plugin.createGoogleCalendar();
+          this.display();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName('Automatic synchronization')
+      .setDesc('Debounce roadmap changes and reconcile them without waiting for an Obsidian restart.')
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.calendar.google.autoSync)
+          .onChange(async (value) => {
+            this.plugin.settings.calendar.google.autoSync = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    const lastSyncAt = this.plugin.settings.calendarState.google.lastSyncAt;
+    const lastSyncError = this.plugin.settings.calendarState.google.lastSyncError;
+    new Setting(containerEl)
+      .setName('Synchronization')
+      .setDesc(
+        lastSyncError !== undefined
+          ? `Sync error: ${lastSyncError}`
+          : lastSyncAt === undefined
+            ? 'Not synchronized yet.'
+            : `Last sync: ${formatTimestamp(lastSyncAt)}`,
+      )
+      .addButton((button) =>
+        button
+          .setButtonText('Sync now')
+          .setDisabled(selectedCalendarId === undefined)
+          .onClick(async () => {
+            try {
+              await this.plugin.syncGoogleCalendar();
+            } catch {
+              // CalendarSyncController persists and surfaces the actionable error state.
+            }
+            this.display();
+          }),
+      );
   }
 
   private addNumberSetting(
@@ -620,6 +1089,66 @@ interface PropertySuggestion {
   readonly field: CanonicalPropertyField;
   readonly key: string;
   readonly count: number;
+}
+
+interface GoogleAuthorizationResult {
+  readonly authenticated: boolean;
+  readonly error?: unknown;
+}
+
+class GoogleAuthorizationModal extends Modal {
+  private settled = false;
+  private authenticated = false;
+  private error: unknown;
+
+  constructor(
+    app: App,
+    private readonly authorizationUrl: string,
+    private readonly complete: () => Promise<void>,
+    private readonly resolve: (result: GoogleAuthorizationResult) => void,
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    this.setTitle('Connect Google Calendar');
+    this.contentEl.createEl('p', {
+      text: 'Open Google sign-in in your default browser. After consent, the browser returns securely to a temporary 127.0.0.1 callback and this dialog closes.',
+    });
+    const actions = new Setting(this.contentEl);
+    const link = actions.controlEl.createEl('a', {
+      text: 'Open Google sign-in',
+      href: this.authorizationUrl,
+    });
+    link.setAttr('target', '_blank');
+    link.setAttr('rel', 'noopener noreferrer');
+    actions.addButton((button) => button.setButtonText('Cancel').onClick(() => this.close()));
+    const status = this.contentEl.createEl('p', {
+      text: 'Waiting for Google authorization…',
+      cls: 'setting-item-description',
+    });
+
+    void this.complete()
+      .then(() => {
+        this.authenticated = true;
+        status.setText('Google Calendar connected.');
+        this.close();
+      })
+      .catch((error: unknown) => {
+        this.error = error;
+        status.setText(safeGoogleErrorMessage(error));
+        new Setting(this.contentEl).addButton((button) =>
+          button.setButtonText('Close').onClick(() => this.close()),
+        );
+      });
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+    if (this.settled) return;
+    this.settled = true;
+    this.resolve({ authenticated: this.authenticated, error: this.error });
+  }
 }
 
 class PropertyMappingSuggestionModal extends Modal {
@@ -720,4 +1249,27 @@ function parsePathPrefixes(value: string): string[] {
 
 function isSourceScopeMode(value: string): value is SourceScopeMode {
   return SOURCE_SCOPE_MODES.some((mode) => mode === value);
+}
+
+function safeGoogleErrorMessage(error: unknown): string {
+  const raw = error instanceof GoogleAuthError
+    ? `${error.kind === 'authentication-expired' ? 'Authentication expired' : 'Authentication error'}: ${error.message}`
+    : error instanceof GoogleCalendarError
+      ? `${error.kind.replaceAll('-', ' ')}: ${error.message}`
+      : error instanceof Error
+        ? error.message
+        : 'Google Calendar operation failed.';
+  return raw
+    .replace(/Bearer\s+\S+/giu, 'Bearer [redacted]')
+    .replace(/(?:1\/\/|ya29\.)[A-Za-z0-9._-]+/gu, '[token redacted]')
+    .replace(/[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}/gu, '[token redacted]');
+}
+
+function isAuthenticationErrorMessage(value: string): boolean {
+  return /auth|token|grant|credential|revok/iu.test(value);
+}
+
+function formatTimestamp(value: string): string {
+  const timestamp = new Date(value);
+  return Number.isNaN(timestamp.getTime()) ? value : timestamp.toLocaleString();
 }

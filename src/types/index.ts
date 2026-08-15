@@ -174,6 +174,11 @@ export const calendarSettingsSchema = z.object({
   automaticallyInclude: calendarPolicySchema.default({}),
   remindersEnabled: z.boolean().default(true),
   reminderMinutes: calendarReminderPolicySchema.default({}),
+  google: z.object({
+    clientId: z.string().trim().default(''),
+    autoSync: z.boolean().default(true),
+    debounceMs: z.number().int().min(500).max(60_000).default(2_000),
+  }).default({}),
 });
 
 export const calendarItemOverrideSchema = z.enum(['include', 'exclude']);
@@ -187,10 +192,22 @@ export const calendarSyncRecordSchema = z.object({
   lastSyncedAt: z.string().min(1).optional(),
 });
 
+export const googleCalendarStateSchema = z.object({
+  refreshTokenSecretId: z.string().min(1).optional(),
+  accountId: z.string().min(1).optional(),
+  accountDisplayName: z.string().min(1).optional(),
+  accountEmail: z.string().min(1).optional(),
+  selectedCalendarId: z.string().min(1).optional(),
+  selectedCalendarName: z.string().min(1).optional(),
+  lastSyncAt: z.string().min(1).optional(),
+  lastSyncError: z.string().min(1).optional(),
+});
+
 export const calendarStateSchema = z.object({
   itemIdentities: z.record(z.string().min(1)).default({}),
   itemOverrides: z.record(calendarItemOverrideSchema).default({}),
   syncRecords: z.record(calendarSyncRecordSchema).default({}),
+  google: googleCalendarStateSchema.default({}),
 });
 
 export const roadmapSettingsSchema = z.object({
@@ -226,6 +243,8 @@ export type CalendarReminderPolicy = z.infer<typeof calendarReminderPolicySchema
 export type CalendarSettings = z.infer<typeof calendarSettingsSchema>;
 export type CalendarItemOverride = z.infer<typeof calendarItemOverrideSchema>;
 export type CalendarSyncRecord = z.infer<typeof calendarSyncRecordSchema>;
+export type GoogleCalendarSettings = z.infer<typeof calendarSettingsSchema>['google'];
+export type GoogleCalendarState = z.infer<typeof googleCalendarStateSchema>;
 export type CalendarState = z.infer<typeof calendarStateSchema>;
 export type RoadmapNodeFrontmatter = z.infer<typeof roadmapNodeFrontmatterSchema>;
 export type InlineTask = z.infer<typeof inlineTaskSchema>;
