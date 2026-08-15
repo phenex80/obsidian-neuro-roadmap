@@ -3,10 +3,14 @@ import type {
   CalendarHttpTransport,
 } from './CalendarHttpTransport';
 
+declare const __NEURO_ROADMAP_DEV__: boolean;
+
 const AUTHORIZATION_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const REVOCATION_ENDPOINT = 'https://oauth2.googleapis.com/revoke';
 const EXPIRY_SKEW_MS = 60_000;
+const GOOGLE_OAUTH_LOG_PREFIX = '[Neuro Roadmap][Google OAuth]';
+const GOOGLE_SCOPE_PREFIX = 'https://www.googleapis.com/auth/';
 
 export const GOOGLE_CALENDAR_SCOPES = [
   'openid',
@@ -276,6 +280,15 @@ export class GoogleAuthClient {
     }
     const grantedScopes = response.scope.split(/\s+/u).filter((scope) => scope.length > 0);
     const missingScopes = GOOGLE_CALENDAR_SCOPES.filter((scope) => !grantedScopes.includes(scope));
+    if (__NEURO_ROADMAP_DEV__) {
+      console.info(GOOGLE_OAUTH_LOG_PREFIX, {
+        requestedOAuthScopes: [...GOOGLE_CALENDAR_SCOPES],
+        rawScope: response.scope,
+        parsedGrantedScopes: [...grantedScopes],
+        normalizedGrantedCapabilities: grantedScopes.map(normalizeGoogleScopeCapability),
+        missingRequiredCapabilities: missingScopes.map(normalizeGoogleScopeCapability),
+      });
+    }
     if (missingScopes.length > 0) {
       throw new GoogleAuthError(
         'permission',
@@ -384,6 +397,12 @@ function redactSensitiveValue(message: string, sensitiveValue: string): string {
 
 function oauthErrorCode(value: unknown): string | null {
   return stringValue(objectValue(value)['error']);
+}
+
+function normalizeGoogleScopeCapability(scope: string): string {
+  return scope.startsWith(GOOGLE_SCOPE_PREFIX)
+    ? scope.slice(GOOGLE_SCOPE_PREFIX.length)
+    : scope;
 }
 
 function randomUrlSafeValue(byteCount: number): string {

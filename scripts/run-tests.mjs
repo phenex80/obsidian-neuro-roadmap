@@ -32,6 +32,9 @@ try {
     target: 'node22',
     sourcemap: 'inline',
     logLevel: 'silent',
+    define: {
+      __NEURO_ROADMAP_DEV__: 'false',
+    },
     plugins: [obsidianTestStub],
   });
 

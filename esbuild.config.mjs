@@ -58,6 +58,9 @@ const context = await esbuild.context({
   logLevel: 'info',
   sourcemap: production ? false : 'inline',
   treeShaking: true,
+  define: {
+    __NEURO_ROADMAP_DEV__: JSON.stringify(!production),
+  },
   plugins: [sveltePlugin],
   outfile: 'main.js',
 });
