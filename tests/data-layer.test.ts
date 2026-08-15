@@ -25,6 +25,12 @@ import { CalendarIdentityManager, calendarItemLocator } from '../src/core/Calend
 import { exportCalendarEventsToICS, IcsCalendarProvider } from '../src/calendar/IcsCalendarProvider';
 import type { CalendarEventProjection } from '../src/core/CalendarCore';
 import { CalendarExportService } from '../src/core/CalendarExportService';
+import {
+  MicrosoftAuthClient,
+  MicrosoftAuthError,
+  type MicrosoftHttpRequest,
+  type MicrosoftHttpResponse,
+} from '../src/calendar/MicrosoftAuth';
 import { buildSubjectSummaries } from '../src/core/DashboardMetrics';
 import { classifyHorizon, formatRelativeTaskDate } from '../src/core/HorizonPlanner';
 import { migrateRoadmapSettingsData } from '../src/core/SettingsMigration';
@@ -310,6 +316,96 @@ test('calendar export service distinguishes filtered selection from all eligible
   assert.equal(all.eventCount, 2);
   assert.equal((current.content.match(/BEGIN:VEVENT/gu) ?? []).length, 1);
   assert.equal((all.content.match(/BEGIN:VEVENT/gu) ?? []).length, 2);
+});
+
+test('Microsoft device code authentication polls safely and stores only the refresh token secret', async () => {
+  const requests: MicrosoftHttpRequest[] = [];
+  const responses: MicrosoftHttpResponse[] = [
+    httpResponse(200, {
+      device_code: 'private-device-code',
+      user_code: 'ABCD-EFGH',
+      verification_uri: 'https://microsoft.com/devicelogin',
+      expires_in: 900,
+      interval: 5,
+    }),
+    httpResponse(400, { error: 'authorization_pending' }),
+    httpResponse(200, {
+      access_token: 'short-lived-access-token',
+      refresh_token: 'long-lived-refresh-token',
+      expires_in: 3600,
+    }),
+  ];
+  const secrets = new Map<string, string>();
+  const waits: number[] = [];
+  const auth = new MicrosoftAuthClient(
+    {
+      request: async (request) => {
+        requests.push(request);
+        return responses.shift() ?? httpResponse(500, {});
+      },
+    },
+    {
+      getSecret: (id) => secrets.get(id) ?? null,
+      setSecret: (id, value) => { secrets.set(id, value); },
+    },
+    () => 1_000,
+    async (milliseconds) => { waits.push(milliseconds); },
+  );
+  const configuration = {
+    clientId: 'public-client-id',
+    tenant: 'common',
+    refreshTokenSecretId: 'neuro-roadmap-refresh-token',
+  };
+
+  const session = await auth.beginDeviceCode(configuration);
+  const token = await auth.completeDeviceCode(configuration, session);
+
+  assert.equal(session.userCode, 'ABCD-EFGH');
+  assert.equal(token.accessToken, 'short-lived-access-token');
+  assert.equal(secrets.get(configuration.refreshTokenSecretId), 'long-lived-refresh-token');
+  assert.deepEqual(waits, [5_000]);
+  assert.match(requests[0]?.body ?? '', /client_id=public-client-id/u);
+  assert.match(requests[0]?.body ?? '', /Calendars.ReadWrite/u);
+  assert.doesNotMatch(JSON.stringify(requests), /long-lived-refresh-token/u);
+});
+
+test('Microsoft refresh rotates the stored token and revoked authorization requires reconnect', async () => {
+  const secrets = new Map([['refresh-secret', 'old-refresh-token']]);
+  const responses = [
+    httpResponse(200, {
+      access_token: 'refreshed-access-token',
+      refresh_token: 'rotated-refresh-token',
+      expires_in: 3600,
+    }),
+    httpResponse(400, {
+      error: 'invalid_grant',
+      error_description: 'The refresh token expired.',
+    }),
+  ];
+  const configuration = {
+    clientId: 'public-client-id',
+    tenant: 'organizations',
+    refreshTokenSecretId: 'refresh-secret',
+  };
+  let now = 1_000;
+  const auth = new MicrosoftAuthClient(
+    { request: async () => responses.shift() ?? httpResponse(500, {}) },
+    {
+      getSecret: (id) => secrets.get(id) ?? null,
+      setSecret: (id, value) => { secrets.set(id, value); },
+    },
+    () => now,
+  );
+
+  assert.equal(await auth.getAccessToken(configuration), 'refreshed-access-token');
+  assert.equal(secrets.get('refresh-secret'), 'rotated-refresh-token');
+  now += 3_700_000;
+  await assert.rejects(
+    auth.getAccessToken(configuration),
+    (error: unknown) => error instanceof MicrosoftAuthError && error.kind === 'authentication-expired',
+  );
+  auth.disconnect(configuration);
+  assert.equal(secrets.get('refresh-secret'), '');
 });
 
 test('roadmap anchor notes contribute inline tasks but are not task nodes', () => {
@@ -927,4 +1023,8 @@ function createNode(
     writeKeys: { startDate: 'start', dueDate: 'due', status: 'status' },
     ...overrides,
   };
+}
+
+function httpResponse(status: number, json: unknown): MicrosoftHttpResponse {
+  return { status, json, headers: {}, text: JSON.stringify(json) };
 }

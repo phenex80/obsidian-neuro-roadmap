@@ -178,6 +178,7 @@
         ...value.calendar,
         automaticallyInclude: { ...value.calendar.automaticallyInclude },
         reminderMinutes: { ...value.calendar.reminderMinutes },
+        microsoft: { ...value.calendar.microsoft },
       },
       calendarState: {
         itemIdentities: { ...value.calendarState.itemIdentities },
@@ -185,6 +186,7 @@
         syncRecords: Object.fromEntries(
           Object.entries(value.calendarState.syncRecords).map(([key, record]) => [key, { ...record }]),
         ),
+        microsoft: { ...value.calendarState.microsoft },
       },
     };
   }
