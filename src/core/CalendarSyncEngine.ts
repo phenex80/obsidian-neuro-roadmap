@@ -105,13 +105,17 @@ export class CalendarSyncEngine {
         continue;
       }
 
-      if (options.verifyRemote === true && this.provider.eventExists !== undefined) {
-        const exists = await this.provider.eventExists(reference);
-        if (!exists) {
+      if (options.verifyRemote === true) {
+        try {
+          await this.provider.updateEvent?.(reference, event);
+          await this.storeRecord(reference, event, hash);
+          updated += 1;
+        } catch (error) {
+          if (!isProviderNotFound(error)) throw error;
           await this.createAndStore(context.calendarId, event, hash);
           recreated += 1;
-          continue;
         }
+        continue;
       }
       unchanged += 1;
     }

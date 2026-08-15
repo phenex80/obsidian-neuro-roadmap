@@ -11,6 +11,10 @@
   import type { RoadmapScheduler } from '../../core/RoadmapScheduler';
   import { calendarCommitmentDate, isCalendarEligible } from '../../core/CalendarCore';
   import type { CalendarExportResult } from '../../core/CalendarExportService';
+  import type {
+    CalendarSyncRuntimeStatus,
+  } from '../../core/CalendarSyncController';
+  import type { CalendarSyncReport } from '../../core/CalendarSyncEngine';
   import DashboardView from '../components/DashboardView.svelte';
   import GanttCanvas from '../components/GanttCanvas.svelte';
   import HorizonBoard from '../components/HorizonBoard.svelte';
@@ -27,6 +31,9 @@
     getCalendarOverride,
     setCalendarOverride,
     exportCalendar,
+    isMicrosoftConnected,
+    syncMicrosoftCalendar,
+    subscribeCalendarSyncStatus,
   }: {
     app: App;
     indexer: RoadmapIndexer;
@@ -36,6 +43,9 @@
     getCalendarOverride: (node: RoadmapNode) => CalendarItemOverride | undefined;
     setCalendarOverride: (node: RoadmapNode, override: CalendarItemOverride | null) => Promise<void>;
     exportCalendar: (nodes: readonly RoadmapNode[]) => Promise<CalendarExportResult>;
+    isMicrosoftConnected: () => boolean;
+    syncMicrosoftCalendar: () => Promise<CalendarSyncReport>;
+    subscribeCalendarSyncStatus: (listener: (status: CalendarSyncRuntimeStatus) => void) => () => void;
   } = $props();
   let nodes = $state<readonly RoadmapNode[]>([]);
   let settings = $state<RoadmapSettings>(roadmapSettingsSchema.parse({}));
@@ -48,6 +58,7 @@
   let scratchpadNode = $state<RoadmapNode | null>(null);
   let circularDependencyCycles = $state<readonly (readonly string[])[]>([]);
   let exportingCalendar = $state(false);
+  let calendarSyncStatus = $state<CalendarSyncRuntimeStatus>({ phase: 'idle' });
   const PRIORITY_FILTERS = ['all', 'high', 'medium', 'low'] as const;
   const TIMELINE_SCALES = ['days', 'weeks', 'months'] as const;
 
@@ -88,10 +99,14 @@
     const unsubscribeSettings = subscribeSettings((updatedSettings) => {
       settings = cloneSettings(updatedSettings);
     });
+    const unsubscribeCalendarSync = subscribeCalendarSyncStatus((status) => {
+      calendarSyncStatus = status;
+    });
 
     return () => {
       unsubscribeIndexer();
       unsubscribeSettings();
+      unsubscribeCalendarSync();
     };
   });
 
@@ -166,6 +181,30 @@
       anchor.remove();
       URL.revokeObjectURL(url);
     }
+  }
+
+  async function syncOutlook(): Promise<void> {
+    try {
+      await syncMicrosoftCalendar();
+    } catch {
+      // CalendarSyncController publishes and persists the actionable error.
+    }
+  }
+
+  function calendarSyncLabel(): string {
+    if (calendarSyncStatus.phase === 'syncing') return 'Syncing…';
+    if (calendarSyncStatus.phase === 'scheduled') return 'Sync scheduled';
+    if (calendarSyncStatus.phase === 'error') {
+      return calendarSyncStatus.message === undefined
+        ? 'Sync error'
+        : `Sync error: ${calendarSyncStatus.message}`;
+    }
+    const lastSyncAt = settings.calendarState.microsoft.lastSyncAt;
+    if (lastSyncAt === undefined) return 'Not synchronized yet';
+    const timestamp = new Date(lastSyncAt);
+    return Number.isNaN(timestamp.getTime())
+      ? `Last sync: ${lastSyncAt}`
+      : `Last sync: ${timestamp.toLocaleString()}`;
   }
 
   function cloneSettings(value: Readonly<RoadmapSettings>): RoadmapSettings {
@@ -280,6 +319,14 @@
     <details class="calendar-control">
       <summary>Calendar</summary>
       <div class="calendar-menu">
+        {#if isMicrosoftConnected() && settings.calendarState.microsoft.selectedCalendarId !== undefined}
+          <button
+            type="button"
+            disabled={calendarSyncStatus.phase === 'syncing'}
+            onclick={() => void syncOutlook()}
+          >Sync Microsoft 365 now</button>
+          <span class:error-state={calendarSyncStatus.phase === 'error'}>{calendarSyncLabel()}</span>
+        {/if}
         <button type="button" disabled={exportingCalendar} onclick={() => void downloadCalendar('current')}>
           Export current view (.ics)
         </button>
@@ -456,6 +503,10 @@
   .calendar-menu span {
     color: var(--text-muted);
     font-size: var(--font-ui-smaller);
+  }
+
+  .calendar-menu .error-state {
+    color: var(--text-error);
   }
 
   .subject-control summary {

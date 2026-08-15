@@ -30,6 +30,23 @@ import { CalendarIdentityManager } from './core/CalendarIdentity';
 import { CalendarExportService, type CalendarExportResult } from './core/CalendarExportService';
 import { IcsCalendarProvider } from './calendar/IcsCalendarProvider';
 import {
+  MicrosoftAuthClient,
+  MicrosoftAuthError,
+  type MicrosoftAuthConfiguration,
+  type MicrosoftDeviceCodeSession,
+} from './calendar/MicrosoftAuth';
+import { ObsidianMicrosoftHttpTransport } from './calendar/ObsidianMicrosoftHttpTransport';
+import {
+  MicrosoftCalendarProvider,
+  MicrosoftGraphError,
+} from './calendar/MicrosoftCalendarProvider';
+import { CalendarSyncEngine, type CalendarSyncReport } from './core/CalendarSyncEngine';
+import {
+  CalendarSyncController,
+  type CalendarSyncRuntimeStatus,
+} from './core/CalendarSyncController';
+import type { CalendarDescriptor } from './core/CalendarProvider';
+import {
   migrateRoadmapSettingsData,
   withoutRoadmapTemplateValue,
 } from './core/SettingsMigration';
@@ -73,14 +90,49 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     () => this.settings.calendarState.itemIdentities,
     async (itemIdentities) => {
       this.settings.calendarState.itemIdentities = itemIdentities;
-      await this.saveSettings();
+      await this.saveSettings(false, false);
     },
   );
   readonly calendarExporter = new CalendarExportService(
     this.calendarIdentity,
     new IcsCalendarProvider(),
   );
+  private readonly microsoftTransport = new ObsidianMicrosoftHttpTransport();
+  readonly microsoftAuth = new MicrosoftAuthClient(
+    this.microsoftTransport,
+    {
+      getSecret: (id) => this.app.secretStorage.getSecret(id),
+      setSecret: (id, secret) => this.app.secretStorage.setSecret(id, secret),
+    },
+  );
+  readonly microsoftProvider = new MicrosoftCalendarProvider(
+    () => this.getMicrosoftAuthConfiguration(),
+    this.microsoftAuth,
+    this.microsoftTransport,
+  );
+  readonly microsoftSyncEngine = new CalendarSyncEngine(
+    this.calendarIdentity,
+    this.microsoftProvider,
+    () => ({
+      settings: this.settings.calendar,
+      state: this.settings.calendarState,
+      calendarId: this.settings.calendarState.microsoft.selectedCalendarId ?? '',
+      vaultName: this.app.vault.getName(),
+    }),
+    async (syncRecords) => {
+      this.settings.calendarState.syncRecords = syncRecords;
+      await this.saveSettings(false, false);
+    },
+  );
+  readonly microsoftSyncController = new CalendarSyncController(
+    (nodes, options) => this.microsoftSyncEngine.reconcile(nodes, options),
+    () => this.settings.calendar.microsoft.debounceMs,
+    (report) => this.recordMicrosoftSyncSuccess(report),
+    (error) => this.recordMicrosoftSyncError(error),
+  );
   private readonly settingsListeners = new Set<SettingsListener>();
+  private microsoftCalendars: readonly CalendarDescriptor[] = [];
+  private activeMicrosoftAuthModal: MicrosoftDeviceCodeModal | null = null;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -89,6 +141,15 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     this.scheduler.setCreationPropertyKeys(parserOptions.propertyKeys);
     await this.indexer.initialize();
     this.indexer.registerEvents((eventRef) => this.registerEvent(eventRef));
+    const unsubscribeMicrosoftSync = this.indexer.subscribe((nodes) => {
+      if (this.shouldAutoSyncMicrosoft()) {
+        this.microsoftSyncController.schedule(nodes);
+      }
+    });
+    this.register(unsubscribeMicrosoftSync);
+    if (this.shouldAutoSyncMicrosoft()) {
+      void this.microsoftSyncController.syncNow(this.indexer.getNodes()).catch(() => undefined);
+    }
     this.registerEvent(
       this.app.vault.on('rename', (file, oldPath) => {
         if (file instanceof TFile && file.extension.toLocaleLowerCase() === 'md') {
@@ -112,6 +173,9 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
   }
 
   onunload(): void {
+    this.activeMicrosoftAuthModal?.close();
+    this.activeMicrosoftAuthModal = null;
+    this.microsoftSyncController.dispose();
     this.settingsListeners.clear();
     this.indexer.clear();
   }
@@ -125,7 +189,7 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     );
   }
 
-  async saveSettings(rebuildIndex = false): Promise<void> {
+  async saveSettings(rebuildIndex = false, scheduleCalendarSync = true): Promise<void> {
     this.settings.excludedTemplateValues = withoutRoadmapTemplateValue(
       this.settings.excludedTemplateValues,
     );
@@ -139,6 +203,9 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     }
     for (const listener of this.settingsListeners) {
       listener(this.settings);
+    }
+    if (scheduleCalendarSync && this.shouldAutoSyncMicrosoft()) {
+      this.microsoftSyncController.schedule(this.indexer.getNodes());
     }
   }
 
@@ -181,6 +248,148 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     });
   }
 
+  subscribeCalendarSyncStatus(
+    listener: (status: CalendarSyncRuntimeStatus) => void,
+  ): () => void {
+    return this.microsoftSyncController.subscribe(listener);
+  }
+
+  isMicrosoftConnected(): boolean {
+    const configuration = this.getMicrosoftAuthConfiguration();
+    return configuration.clientId.length > 0 && this.microsoftAuth.hasRefreshToken(configuration);
+  }
+
+  getMicrosoftCalendars(): readonly CalendarDescriptor[] {
+    return this.microsoftCalendars.map((calendar) => ({ ...calendar }));
+  }
+
+  async connectMicrosoft(): Promise<boolean> {
+    try {
+      const configuration = await this.ensureMicrosoftAuthConfiguration();
+      const session = await this.microsoftAuth.beginDeviceCode(configuration);
+      const authenticated = await this.openMicrosoftDeviceCodeModal(configuration, session);
+      if (!authenticated) return false;
+
+      const profile = await this.microsoftProvider.getAccountProfile();
+      const previousAccountId = this.settings.calendarState.microsoft.accountId;
+      const hasExistingMappings = Object.values(this.settings.calendarState.syncRecords)
+        .some((record) => record.provider === 'microsoft');
+      if (
+        previousAccountId !== undefined &&
+        previousAccountId !== profile.id &&
+        hasExistingMappings
+      ) {
+        this.microsoftAuth.disconnect(configuration);
+        await this.recordMicrosoftSyncError(new Error(
+          'A different Microsoft account was used. Reconnect the original account to preserve existing event mappings.',
+        ));
+        return false;
+      }
+
+      this.settings.calendarState.microsoft.accountId = profile.id;
+      this.settings.calendarState.microsoft.accountDisplayName = profile.displayName;
+      this.settings.calendarState.microsoft.accountEmail = profile.email;
+      delete this.settings.calendarState.microsoft.lastSyncError;
+      await this.saveSettings(false, false);
+      await this.refreshMicrosoftCalendars();
+      return true;
+    } catch (error) {
+      await this.recordMicrosoftSyncError(error);
+      return false;
+    }
+  }
+
+  async disconnectMicrosoft(): Promise<void> {
+    this.microsoftAuth.disconnect(this.getMicrosoftAuthConfiguration());
+    this.microsoftCalendars = [];
+    await this.saveSettings(false, false);
+  }
+
+  async refreshMicrosoftCalendars(): Promise<readonly CalendarDescriptor[]> {
+    try {
+      this.microsoftCalendars = await this.microsoftProvider.listCalendars();
+      const selectedId = this.settings.calendarState.microsoft.selectedCalendarId;
+      if (
+        selectedId !== undefined &&
+        !this.microsoftCalendars.some((calendar) => calendar.id === selectedId)
+      ) {
+        await this.recordMicrosoftSyncError(new Error(
+          'The selected Microsoft calendar no longer exists. Select another calendar.',
+        ));
+      }
+      return this.getMicrosoftCalendars();
+    } catch (error) {
+      await this.recordMicrosoftSyncError(error);
+      return [];
+    }
+  }
+
+  async createMicrosoftCalendar(name = 'Neuro Roadmap'): Promise<boolean> {
+    try {
+      const calendar = await this.microsoftProvider.createCalendar(name);
+      this.microsoftCalendars = [
+        ...this.microsoftCalendars.filter((candidate) => candidate.id !== calendar.id),
+        calendar,
+      ];
+      return this.selectMicrosoftCalendar(calendar.id);
+    } catch (error) {
+      await this.recordMicrosoftSyncError(error);
+      return false;
+    }
+  }
+
+  async selectMicrosoftCalendar(calendarId: string): Promise<boolean> {
+    const calendar = this.microsoftCalendars.find((candidate) => candidate.id === calendarId);
+    if (calendar === undefined) {
+      await this.recordMicrosoftSyncError(new Error('Refresh the Microsoft calendar list and select a valid calendar.'));
+      return false;
+    }
+    const previousId = this.settings.calendarState.microsoft.selectedCalendarId;
+    if (previousId !== undefined && previousId !== calendar.id) {
+      try {
+        await this.microsoftSyncEngine.releaseCalendar(previousId);
+      } catch (error) {
+        await this.recordMicrosoftSyncError(error);
+        return false;
+      }
+    }
+    this.settings.calendarState.microsoft.selectedCalendarId = calendar.id;
+    this.settings.calendarState.microsoft.selectedCalendarName = calendar.name;
+    delete this.settings.calendarState.microsoft.lastSyncError;
+    await this.saveSettings(false, false);
+    if (this.settings.calendar.microsoft.autoSync) {
+      try {
+        await this.syncMicrosoftCalendar();
+      } catch {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  async syncMicrosoftCalendar(): Promise<CalendarSyncReport> {
+    if (!this.isMicrosoftConnected()) {
+      throw new Error('Connect Microsoft 365 before synchronization.');
+    }
+    if (this.settings.calendarState.microsoft.selectedCalendarId === undefined) {
+      throw new Error('Select a Microsoft calendar before synchronization.');
+    }
+    return this.microsoftSyncController.syncNow(this.indexer.getNodes());
+  }
+
+  getMicrosoftConnectionLabel(): string {
+    const error = this.settings.calendarState.microsoft.lastSyncError;
+    if (!this.isMicrosoftConnected()) {
+      return error === undefined ? 'Not connected' : `Not connected · ${error}`;
+    }
+    if (error !== undefined && isAuthenticationErrorMessage(error)) {
+      return `Authentication expired/error: ${error}`;
+    }
+    const account = this.settings.calendarState.microsoft.accountEmail
+      ?? this.settings.calendarState.microsoft.accountDisplayName;
+    return account === undefined ? 'Connected (not yet verified)' : `Connected as ${account}`;
+  }
+
   getParserOptions(): RoadmapParserOptions {
     return {
       propertyKeys: compilePropertyKeyMap(this.settings.propertyMappings),
@@ -201,6 +410,64 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     const leaf = existingLeaf ?? this.app.workspace.getLeaf('tab');
     await leaf.setViewState({ type: VIEW_TYPE_NEURO_ROADMAP, active: true });
     await this.app.workspace.revealLeaf(leaf);
+  }
+
+  private getMicrosoftAuthConfiguration(): MicrosoftAuthConfiguration {
+    return {
+      clientId: this.settings.calendar.microsoft.clientId,
+      tenant: this.settings.calendar.microsoft.tenant,
+      refreshTokenSecretId: this.settings.calendarState.microsoft.refreshTokenSecretId ?? '',
+    };
+  }
+
+  private async ensureMicrosoftAuthConfiguration(): Promise<MicrosoftAuthConfiguration> {
+    if (this.settings.calendarState.microsoft.refreshTokenSecretId === undefined) {
+      this.settings.calendarState.microsoft.refreshTokenSecretId =
+        `neuro-roadmap-ms-${crypto.randomUUID().replaceAll('-', '')}`;
+      await this.saveSettings(false, false);
+    }
+    return this.getMicrosoftAuthConfiguration();
+  }
+
+  private shouldAutoSyncMicrosoft(): boolean {
+    return (
+      this.settings.calendar.microsoft.autoSync &&
+      this.settings.calendarState.microsoft.selectedCalendarId !== undefined &&
+      this.isMicrosoftConnected()
+    );
+  }
+
+  private async recordMicrosoftSyncSuccess(report: CalendarSyncReport): Promise<void> {
+    this.settings.calendarState.microsoft.lastSyncAt = report.completedAt;
+    delete this.settings.calendarState.microsoft.lastSyncError;
+    await this.saveSettings(false, false);
+  }
+
+  private async recordMicrosoftSyncError(error: unknown): Promise<void> {
+    this.settings.calendarState.microsoft.lastSyncError = safeMicrosoftErrorMessage(error);
+    await this.saveSettings(false, false);
+  }
+
+  private openMicrosoftDeviceCodeModal(
+    configuration: MicrosoftAuthConfiguration,
+    session: MicrosoftDeviceCodeSession,
+  ): Promise<boolean> {
+    return new Promise((resolve) => {
+      const modal = new MicrosoftDeviceCodeModal(
+        this.app,
+        session,
+        (signal) => this.microsoftAuth.completeDeviceCode(configuration, session, signal),
+        (authenticated) => {
+          if (this.activeMicrosoftAuthModal === modal) {
+            this.activeMicrosoftAuthModal = null;
+          }
+          resolve(authenticated);
+        },
+      );
+      this.activeMicrosoftAuthModal?.close();
+      this.activeMicrosoftAuthModal = modal;
+      modal.open();
+    });
   }
 }
 
@@ -422,7 +689,7 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Enable calendar reminders')
-      .setDesc('Include RFC 5545 VALARM reminders using the policy for each semantic type.')
+      .setDesc('Apply type-specific reminders to ICS and connected calendar providers.')
       .addToggle((toggle) =>
         toggle
           .setValue(this.plugin.settings.calendar.remindersEnabled)
@@ -436,6 +703,8 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
     if (this.plugin.settings.calendar.remindersEnabled) {
       this.addCalendarReminderSettings(containerEl);
     }
+
+    this.addMicrosoftCalendarSettings(containerEl);
 
     containerEl.createEl('h3', { text: 'Colors' });
     this.addColorSettings(containerEl, this.plugin.settings.colors);
@@ -593,6 +862,156 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
     }
   }
 
+  private addMicrosoftCalendarSettings(containerEl: HTMLElement): void {
+    containerEl.createEl('h3', { text: 'Microsoft 365 / Outlook' });
+    containerEl.createEl('p', {
+      text: 'One-way sync only: Markdown owns managed events. Outlook edits are never written back to the vault.',
+      cls: 'setting-item-description',
+    });
+
+    new Setting(containerEl)
+      .setName('Provider')
+      .setDesc('Microsoft 365 through delegated Microsoft Graph permissions.')
+      .addText((text) => text.setValue('Microsoft 365').setDisabled(true));
+
+    new Setting(containerEl)
+      .setName('Application (client) ID')
+      .setDesc('Public-client App Registration ID. No client secret is used or accepted.')
+      .addText((text) =>
+        text
+          .setPlaceholder('00000000-0000-0000-0000-000000000000')
+          .setValue(this.plugin.settings.calendar.microsoft.clientId)
+          .onChange(async (value) => {
+            this.plugin.settings.calendar.microsoft.clientId = value.trim();
+            await this.plugin.saveSettings(false, false);
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Tenant')
+      .setDesc('Use common for work, school, and personal Microsoft accounts, or enter a tenant ID.')
+      .addText((text) =>
+        text
+          .setPlaceholder('common')
+          .setValue(this.plugin.settings.calendar.microsoft.tenant)
+          .onChange(async (value) => {
+            const tenant = value.trim();
+            if (tenant.length > 0) {
+              this.plugin.settings.calendar.microsoft.tenant = tenant;
+              await this.plugin.saveSettings(false, false);
+            }
+          }),
+      );
+
+    const connection = new Setting(containerEl)
+      .setName('Connection')
+      .setDesc(this.plugin.getMicrosoftConnectionLabel());
+    if (this.plugin.isMicrosoftConnected()) {
+      connection
+        .addButton((button) =>
+          button.setButtonText('Reconnect').onClick(async () => {
+            await this.plugin.connectMicrosoft();
+            this.display();
+          }),
+        )
+        .addButton((button) =>
+          button.setButtonText('Disconnect').setWarning().onClick(async () => {
+            await this.plugin.disconnectMicrosoft();
+            this.display();
+          }),
+        );
+    } else {
+      connection.addButton((button) =>
+        button.setButtonText('Connect').setCta().onClick(async () => {
+          await this.plugin.connectMicrosoft();
+          this.display();
+        }),
+      );
+    }
+
+    if (this.plugin.isMicrosoftConnected()) {
+      const calendars = this.plugin.getMicrosoftCalendars();
+      const selectedCalendarId = this.plugin.settings.calendarState.microsoft.selectedCalendarId;
+      const selectedCalendarName = this.plugin.settings.calendarState.microsoft.selectedCalendarName;
+      new Setting(containerEl)
+        .setName('Outlook calendar')
+        .setDesc('Select an existing calendar. Changing it first removes managed events from the previous calendar.')
+        .addDropdown((dropdown) => {
+          dropdown.addOption('', 'Select a calendar');
+          if (
+            selectedCalendarId !== undefined &&
+            !calendars.some((calendar) => calendar.id === selectedCalendarId)
+          ) {
+            dropdown.addOption(selectedCalendarId, selectedCalendarName ?? 'Previously selected calendar');
+          }
+          for (const calendar of calendars) {
+            dropdown.addOption(calendar.id, calendar.primary ? `${calendar.name} (default)` : calendar.name);
+          }
+          dropdown.setValue(selectedCalendarId ?? '').onChange(async (value) => {
+            if (value.length > 0) await this.plugin.selectMicrosoftCalendar(value);
+            this.display();
+          });
+        })
+        .addButton((button) =>
+          button.setButtonText('Refresh list').onClick(async () => {
+            await this.plugin.refreshMicrosoftCalendars();
+            this.display();
+          }),
+        );
+
+      new Setting(containerEl)
+        .setName('Dedicated calendar')
+        .setDesc('Creates “Neuro Roadmap” only after this explicit action, then selects it for sync.')
+        .addButton((button) =>
+          button.setButtonText('Create and select').onClick(async () => {
+            await this.plugin.createMicrosoftCalendar();
+            this.display();
+          }),
+        );
+
+      new Setting(containerEl)
+        .setName('Automatic synchronization')
+        .setDesc('Debounce roadmap changes and reconcile them without waiting for an Obsidian restart.')
+        .addToggle((toggle) =>
+          toggle
+            .setValue(this.plugin.settings.calendar.microsoft.autoSync)
+            .onChange(async (value) => {
+              this.plugin.settings.calendar.microsoft.autoSync = value;
+              await this.plugin.saveSettings();
+            }),
+        );
+
+      const lastSyncAt = this.plugin.settings.calendarState.microsoft.lastSyncAt;
+      const lastSyncError = this.plugin.settings.calendarState.microsoft.lastSyncError;
+      new Setting(containerEl)
+        .setName('Synchronization')
+        .setDesc(
+          lastSyncError !== undefined
+            ? `Sync error: ${lastSyncError}`
+            : lastSyncAt === undefined
+              ? 'Not synchronized yet.'
+              : `Last sync: ${formatTimestamp(lastSyncAt)}`,
+        )
+        .addButton((button) =>
+          button
+            .setButtonText('Sync now')
+            .setDisabled(selectedCalendarId === undefined)
+            .onClick(async () => {
+              try {
+                await this.plugin.syncMicrosoftCalendar();
+              } catch {
+                // The controller persists and surfaces the actionable error state.
+              }
+              this.display();
+            }),
+        );
+    }
+
+    new Setting(containerEl)
+      .setName('Credential storage')
+      .setDesc('Refresh tokens are stored in Obsidian SecretStorage. Access tokens stay in memory and are never written to plugin data or logs.');
+  }
+
   private addNumberSetting(
     containerEl: HTMLElement,
     name: string,
@@ -670,12 +1089,94 @@ class PropertyMappingSuggestionModal extends Modal {
   }
 }
 
+class MicrosoftDeviceCodeModal extends Modal {
+  private readonly abortController = new AbortController();
+  private settled = false;
+  private authenticated = false;
+
+  constructor(
+    app: App,
+    private readonly session: MicrosoftDeviceCodeSession,
+    private readonly complete: (signal: AbortSignal) => Promise<unknown>,
+    private readonly resolve: (authenticated: boolean) => void,
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    this.setTitle('Connect Microsoft 365');
+    this.contentEl.createEl('p', { text: this.session.message });
+    const code = this.contentEl.createEl('code', { text: this.session.userCode });
+    code.setAttr('aria-label', 'Microsoft device sign-in code');
+    const actions = new Setting(this.contentEl);
+    const link = actions.controlEl.createEl('a', {
+      text: 'Open Microsoft sign-in',
+      href: this.session.verificationUri,
+    });
+    link.setAttr('target', '_blank');
+    link.setAttr('rel', 'noopener noreferrer');
+    actions.addButton((button) => button.setButtonText('Cancel').onClick(() => this.close()));
+    const status = this.contentEl.createEl('p', {
+      text: 'Waiting for Microsoft authorization…',
+      cls: 'setting-item-description',
+    });
+
+    void this.complete(this.abortController.signal)
+      .then(() => {
+        this.authenticated = true;
+        status.setText('Authorization completed. Continue to load your calendars.');
+        new Setting(this.contentEl).addButton((button) =>
+          button.setButtonText('Continue').setCta().onClick(() => this.close()),
+        );
+      })
+      .catch((error: unknown) => {
+        if (this.abortController.signal.aborted) return;
+        status.setText(safeMicrosoftErrorMessage(error));
+        new Setting(this.contentEl).addButton((button) =>
+          button.setButtonText('Close').onClick(() => this.close()),
+        );
+      });
+  }
+
+  onClose(): void {
+    this.abortController.abort();
+    this.contentEl.empty();
+    if (!this.settled) {
+      this.settled = true;
+      this.resolve(this.authenticated);
+    }
+  }
+}
+
 function appendMappingKey(existing: string, key: string): string {
   const values = parseCommaSeparatedValues(existing);
   if (!values.some((value) => normalizePropertyKey(value) === normalizePropertyKey(key))) {
     values.push(key);
   }
   return values.join(', ');
+}
+
+function safeMicrosoftErrorMessage(error: unknown): string {
+  const raw = error instanceof MicrosoftAuthError
+    ? `${error.kind === 'authentication-expired' ? 'Authentication expired' : 'Authentication error'}: ${error.message}`
+    : error instanceof MicrosoftGraphError
+      ? `${error.kind.replaceAll('-', ' ')}: ${error.message}`
+    : error instanceof Error
+      ? error.message
+      : 'Microsoft calendar operation failed.';
+  return raw
+    .replace(/Bearer\s+\S+/giu, 'Bearer [redacted]')
+    .replace(/[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}/gu, '[token redacted]')
+    .slice(0, 500);
+}
+
+function isAuthenticationErrorMessage(message: string): boolean {
+  return /auth|authorization|token|permission|reconnect|401|403/iu.test(message);
+}
+
+function formatTimestamp(value: string): string {
+  const timestamp = new Date(value);
+  return Number.isNaN(timestamp.getTime()) ? value : timestamp.toLocaleString();
 }
 
 function suggestPropertyMappings(

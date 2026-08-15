@@ -16,7 +16,9 @@ Calendar is a one-way projection from the Markdown-backed roadmap. Exams, assign
 
 The Calendar toolbar menu distinguishes **Export current view** from **Export all eligible items**. Exported RFC 5545 files use stable UIDs, all-day deadline events with exclusive end dates, transparent availability, optional type-specific reminders, escaped Unicode text, and source links back to Obsidian.
 
-Inline tasks receive a compact Obsidian block ID only when a calendar operation first needs stable identity. Provider IDs and sync metadata remain in plugin-managed state. No Microsoft or Google network integration is performed in this release.
+Inline tasks receive a compact Obsidian block ID only when a calendar operation first needs stable identity. Provider IDs and sync metadata remain in plugin-managed state. Google Calendar and two-way sync are not implemented.
+
+Microsoft 365 / Outlook one-way sync is available through a user-owned public-client App Registration. Setup, permissions, security constraints, and sync behavior are documented in [Microsoft 365 setup](docs/microsoft-365-setup.md).
 
 ## Markdown data
 

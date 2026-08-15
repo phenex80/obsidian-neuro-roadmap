@@ -133,6 +133,7 @@ export class MicrosoftAuthClient {
     let intervalSeconds = session.intervalSeconds;
     while (this.now() < session.expiresAt) {
       signal?.throwIfAborted();
+      await this.wait(intervalSeconds * 1_000, signal);
       const response = await this.requestTokenEndpoint(
         configuration,
         'token',
@@ -147,12 +148,10 @@ export class MicrosoftAuthClient {
       }
       const code = oauthErrorCode(response.json);
       if (code === 'authorization_pending') {
-        await this.wait(intervalSeconds * 1_000, signal);
         continue;
       }
       if (code === 'slow_down') {
         intervalSeconds += 5;
-        await this.wait(intervalSeconds * 1_000, signal);
         continue;
       }
       if (code === 'authorization_declined') {

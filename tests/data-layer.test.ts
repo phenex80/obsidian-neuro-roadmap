@@ -37,6 +37,10 @@ import {
 } from '../src/calendar/MicrosoftCalendarProvider';
 import { CalendarSyncEngine } from '../src/core/CalendarSyncEngine';
 import type { CalendarProvider } from '../src/core/CalendarProvider';
+import {
+  CalendarSyncController,
+  type CalendarSyncRuntimeStatus,
+} from '../src/core/CalendarSyncController';
 import { buildSubjectSummaries } from '../src/core/DashboardMetrics';
 import { classifyHorizon, formatRelativeTaskDate } from '../src/core/HorizonPlanner';
 import { migrateRoadmapSettingsData } from '../src/core/SettingsMigration';
@@ -369,7 +373,7 @@ test('Microsoft device code authentication polls safely and stores only the refr
   assert.equal(session.userCode, 'ABCD-EFGH');
   assert.equal(token.accessToken, 'short-lived-access-token');
   assert.equal(secrets.get(configuration.refreshTokenSecretId), 'long-lived-refresh-token');
-  assert.deepEqual(waits, [5_000]);
+  assert.deepEqual(waits, [5_000, 5_000]);
   assert.match(requests[0]?.body ?? '', /client_id=public-client-id/u);
   assert.match(requests[0]?.body ?? '', /Calendars.ReadWrite/u);
   assert.doesNotMatch(JSON.stringify(requests), /long-lived-refresh-token/u);
@@ -595,7 +599,7 @@ test('Microsoft reconciliation preserves mapping across edits, restart, calendar
   assert.equal(remote.get('event-1')?.title, 'Renamed exam');
 
   const afterRestart = await createEngine().reconcile([changed], { verifyRemote: true });
-  assert.equal(afterRestart.unchanged, 1);
+  assert.equal(afterRestart.updated, 1);
   assert.equal(eventSequence, 1);
 
   remote.delete('event-1');
@@ -621,6 +625,60 @@ test('Microsoft reconciliation preserves mapping across edits, restart, calendar
   assert.deepEqual(settings.calendarState.syncRecords, {});
   assert.ok(operations.includes('update:event-1'));
   assert.ok(operations.some((operation) => operation.startsWith('delete:calendar-a:', 0)));
+});
+
+test('Microsoft sync controller debounces index changes, serializes manual sync, and cleans timers', async () => {
+  const reconciliations: { ids: readonly string[]; verifyRemote: boolean }[] = [];
+  const statuses: CalendarSyncRuntimeStatus[] = [];
+  const successes: string[] = [];
+  const cancelled: unknown[] = [];
+  let scheduledCallback: (() => void) | null = null;
+  const controller = new CalendarSyncController(
+    async (nodes, options) => {
+      reconciliations.push({
+        ids: nodes.map((node) => node.id),
+        verifyRemote: options.verifyRemote === true,
+      });
+      return {
+        created: 0,
+        updated: 0,
+        deleted: 0,
+        recreated: 0,
+        unchanged: nodes.length,
+        completedAt: '2026-08-15T12:00:00.000Z',
+      };
+    },
+    () => 2_000,
+    async (report) => { successes.push(report.completedAt); },
+    async () => undefined,
+    (callback) => {
+      scheduledCallback = callback;
+      return 1 as ReturnType<typeof setTimeout>;
+    },
+    (handle) => { cancelled.push(handle); },
+  );
+  const unsubscribe = controller.subscribe((status) => statuses.push(status));
+
+  controller.schedule([createNode('first')]);
+  controller.schedule([createNode('latest')]);
+  const runScheduled = scheduledCallback as (() => void) | null;
+  runScheduled?.();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await controller.syncNow([createNode('manual')]);
+
+  assert.deepEqual(reconciliations, [
+    { ids: ['latest'], verifyRemote: false },
+    { ids: ['manual'], verifyRemote: true },
+  ]);
+  assert.equal(cancelled.length, 1);
+  assert.equal(successes.length, 2);
+  assert.ok(statuses.some((status) => status.phase === 'scheduled'));
+  assert.ok(statuses.some((status) => status.phase === 'syncing'));
+
+  controller.schedule([createNode('disposed')]);
+  controller.dispose();
+  unsubscribe();
+  assert.equal(cancelled.length, 2);
 });
 
 test('roadmap anchor notes contribute inline tasks but are not task nodes', () => {
