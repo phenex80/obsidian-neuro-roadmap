@@ -176,6 +176,7 @@ export const calendarSettingsSchema = z.object({
   reminderMinutes: calendarReminderPolicySchema.default({}),
   google: z.object({
     clientId: z.string().trim().default(''),
+    clientSecret: z.string().trim().default(''),
     autoSync: z.boolean().default(true),
     debounceMs: z.number().int().min(500).max(60_000).default(2_000),
   }).default({}),

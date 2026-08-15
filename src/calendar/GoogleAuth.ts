@@ -19,6 +19,7 @@ export const GOOGLE_CALENDAR_SCOPES = [
 
 export interface GoogleAuthConfiguration {
   readonly clientId: string;
+  readonly clientSecret: string;
   readonly refreshTokenSecretId: string;
 }
 
@@ -74,7 +75,7 @@ interface TokenResponse {
   readonly scope: string;
 }
 
-/** Installed-app OAuth client using loopback redirects and PKCE S256 without a client secret. */
+/** Installed-app OAuth client using loopback redirects, PKCE S256, and configured desktop credentials. */
 export class GoogleAuthClient {
   private cachedToken: GoogleTokenSet | null = null;
   private pendingRefreshToken: string | null = null;
@@ -136,13 +137,18 @@ export class GoogleAuthClient {
     }
     const tokenResponse = await this.requestToken(formBody({
       client_id: configuration.clientId,
+      client_secret: configuration.clientSecret,
       code: response.code,
       code_verifier: session.codeVerifier,
       grant_type: 'authorization_code',
       redirect_uri: session.redirectUri,
-    }), 'Unable to complete Google authorization.');
+    }), 'Unable to complete Google authorization.', configuration.clientSecret);
     if (tokenResponse.status < 200 || tokenResponse.status >= 300) {
-      throw authEndpointError(tokenResponse, 'Unable to complete Google authorization.');
+      throw authEndpointError(
+        tokenResponse,
+        'Unable to complete Google authorization.',
+        configuration.clientSecret,
+      );
     }
     return this.acceptTokenResponse(
       configuration,
@@ -163,9 +169,10 @@ export class GoogleAuthClient {
     }
     const response = await this.requestToken(formBody({
       client_id: configuration.clientId,
+      client_secret: configuration.clientSecret,
       refresh_token: refreshToken,
       grant_type: 'refresh_token',
-    }), 'Unable to refresh Google authorization.');
+    }), 'Unable to refresh Google authorization.', configuration.clientSecret);
     if (response.status < 200 || response.status >= 300) {
       const code = oauthErrorCode(response.json);
       if (code === 'invalid_grant' || code === 'invalid_client') {
@@ -176,7 +183,11 @@ export class GoogleAuthClient {
           response.status,
         );
       }
-      throw authEndpointError(response, 'Unable to refresh Google authorization.');
+      throw authEndpointError(
+        response,
+        'Unable to refresh Google authorization.',
+        configuration.clientSecret,
+      );
     }
     return this.acceptTokenResponse(configuration, response.json, false).accessToken;
   }
@@ -287,7 +298,11 @@ export class GoogleAuthClient {
     return this.cachedToken;
   }
 
-  private async requestToken(body: string, fallback: string): Promise<CalendarHttpResponse> {
+  private async requestToken(
+    body: string,
+    fallback: string,
+    clientSecret: string,
+  ): Promise<CalendarHttpResponse> {
     let response: CalendarHttpResponse;
     try {
       response = await this.transport.request({
@@ -299,7 +314,7 @@ export class GoogleAuthClient {
     } catch (error) {
       throw new GoogleAuthError(
         'network',
-        error instanceof Error ? error.message : fallback,
+        redactSensitiveValue(error instanceof Error ? error.message : fallback, clientSecret),
       );
     }
     if (response.status < 200 || response.status >= 300) {
@@ -312,6 +327,9 @@ export class GoogleAuthClient {
 function validateConfiguration(configuration: GoogleAuthConfiguration): void {
   if (configuration.clientId.trim().length === 0) {
     throw new GoogleAuthError('configuration', 'Google OAuth client ID is required.');
+  }
+  if (configuration.clientSecret.trim().length === 0) {
+    throw new GoogleAuthError('configuration', 'Google OAuth client secret is required.');
   }
   if (configuration.refreshTokenSecretId.trim().length === 0) {
     throw new GoogleAuthError('configuration', 'Google secure token storage is not initialized.');
@@ -346,14 +364,22 @@ function parseTokenResponse(value: unknown): TokenResponse {
   };
 }
 
-function authEndpointError(response: CalendarHttpResponse, fallback: string): GoogleAuthError {
+function authEndpointError(
+  response: CalendarHttpResponse,
+  fallback: string,
+  clientSecret = '',
+): GoogleAuthError {
   const record = objectValue(response.json);
   const description = stringValue(record['error_description']);
   return new GoogleAuthError(
     response.status >= 500 ? 'server' : 'network',
-    description ?? fallback,
+    redactSensitiveValue(description ?? fallback, clientSecret),
     response.status,
   );
+}
+
+function redactSensitiveValue(message: string, sensitiveValue: string): string {
+  return sensitiveValue.length === 0 ? message : message.replaceAll(sensitiveValue, '[redacted]');
 }
 
 function oauthErrorCode(value: unknown): string | null {

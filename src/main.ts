@@ -263,7 +263,11 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
 
   isGoogleConnected(): boolean {
     const configuration = this.getGoogleAuthConfiguration();
-    return configuration.clientId.length > 0 && this.googleAuth.hasRefreshToken(configuration);
+    return (
+      configuration.clientId.length > 0 &&
+      configuration.clientSecret.length > 0 &&
+      this.googleAuth.hasRefreshToken(configuration)
+    );
   }
 
   isCalendarSyncAvailable(): boolean {
@@ -467,6 +471,7 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
   private getGoogleAuthConfiguration(): GoogleAuthConfiguration {
     return {
       clientId: this.settings.calendar.google.clientId,
+      clientSecret: this.settings.calendar.google.clientSecret,
       refreshTokenSecretId: this.settings.calendarState.google.refreshTokenSecretId ?? '',
     };
   }
@@ -938,7 +943,7 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('OAuth client ID')
-      .setDesc('Desktop OAuth client ID from Google Cloud. No client secret is used or accepted.')
+      .setDesc('Desktop OAuth client ID from Google Cloud.')
       .addText((text) =>
         text
           .setPlaceholder('000000000000-example.apps.googleusercontent.com')
@@ -949,6 +954,21 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings(false, false);
           }),
       );
+
+    new Setting(containerEl)
+      .setName('OAuth client secret')
+      .setDesc('Client secret from the Google Cloud Desktop OAuth client credentials. This is not your Google password or a refresh token.')
+      .addText((text) => {
+        text.inputEl.type = 'password';
+        text
+          .setPlaceholder('Google Cloud desktop client secret')
+          .setValue(this.plugin.settings.calendar.google.clientSecret)
+          .setDisabled(this.plugin.isGoogleConnected())
+          .onChange(async (value) => {
+            this.plugin.settings.calendar.google.clientSecret = value.trim();
+            await this.plugin.saveSettings(false, false);
+          });
+      });
 
     const connection = new Setting(containerEl)
       .setName('Connection')
@@ -975,7 +995,11 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
         button
           .setButtonText('Connect')
           .setCta()
-          .setDisabled(!Platform.isDesktopApp || this.plugin.settings.calendar.google.clientId.length === 0)
+          .setDisabled(
+            !Platform.isDesktopApp ||
+            this.plugin.settings.calendar.google.clientId.length === 0 ||
+            this.plugin.settings.calendar.google.clientSecret.length === 0
+          )
           .onClick(async () => {
             await this.plugin.connectGoogle();
             this.display();

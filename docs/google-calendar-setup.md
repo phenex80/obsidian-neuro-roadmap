@@ -12,8 +12,8 @@ The project owner must configure Google Cloud before users can connect:
 2. Enable the [Google Calendar API](https://console.cloud.google.com/apis/library/calendar-json.googleapis.com).
 3. Configure the OAuth consent screen, support email, audience, and test users as appropriate for the project. A public application requesting Calendar user data may require [Google OAuth verification](https://developers.google.com/workspace/calendar/api/auth).
 4. Open **Google Auth Platform → Clients**, create an OAuth client, and choose **Desktop app**. The desktop client type permits a loopback redirect on a random `127.0.0.1` port; no fixed callback port is entered in plugin settings.
-5. Copy only the OAuth **client ID** into **Settings → Neuro Roadmap → Google Calendar**.
-6. Do not commit or paste a client secret into the plugin. The installed-app flow uses PKCE and does not send a client secret.
+5. Copy the OAuth **client ID** and **client secret** into **Settings → Neuro Roadmap → Google Calendar**.
+6. The client secret is the value from the Google Cloud Desktop OAuth client credentials. It is not a Google password or user refresh token. A native-app client secret is not a security boundary, but it is sent only to Google's token endpoint and must not be logged or committed.
 
 The runtime requests these scopes together because installed applications do not support incremental authorization:
 
@@ -39,7 +39,7 @@ The browser callback displays only a success message and closes its one-shot ser
 
 ## Connect and choose a calendar
 
-1. Enter the desktop OAuth client ID.
+1. Enter the desktop OAuth client ID and client secret.
 2. Select **Connect**, open the Google sign-in link, and approve the requested permissions.
 3. Confirm the **Connected as…** account label.
 4. Select **Refresh list**, then choose an existing writable calendar; or select **Create and select** to explicitly create `Neuro Roadmap`.

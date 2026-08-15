@@ -63,6 +63,8 @@ import {
   isFrontmatterInSourceScope,
 } from '../src/core/SourceScope';
 
+const GOOGLE_TEST_CLIENT_SECRET = 'desktop-client-secret-value';
+
 const metadataCache = {
   getFirstLinkpathDest: () => null,
 } as unknown as MetadataCache;
@@ -235,6 +237,7 @@ test('calendar sync state remains plugin-managed and defaults empty', () => {
   assert.deepEqual(settings.calendarState.google, {});
   assert.deepEqual(settings.calendar.google, {
     clientId: '',
+    clientSecret: '',
     autoSync: true,
     debounceMs: 2_000,
   });
@@ -307,8 +310,13 @@ test('ICS provider advertises file-only capabilities without remote APIs', async
 test('Google installed-app authorization uses loopback PKCE and required scopes', async () => {
   const transport = new QueueCalendarTransport([]);
   const client = new GoogleAuthClient(transport, createSecretStore());
+  const configuration = {
+    clientId: 'desktop-client.apps.googleusercontent.com',
+    clientSecret: GOOGLE_TEST_CLIENT_SECRET,
+    refreshTokenSecretId: 'google-token',
+  };
   const session = await client.beginAuthorization(
-    { clientId: 'desktop-client.apps.googleusercontent.com', refreshTokenSecretId: 'google-token' },
+    configuration,
     'http://127.0.0.1:49152/oauth2/callback',
   );
   const url = new URL(session.authorizationUrl);
@@ -321,6 +329,23 @@ test('Google installed-app authorization uses loopback PKCE and required scopes'
   assert.equal(url.searchParams.get('access_type'), 'offline');
   assert.equal(url.searchParams.get('prompt'), 'consent');
   assert.deepEqual(url.searchParams.get('scope')?.split(' '), [...GOOGLE_CALENDAR_SCOPES]);
+  assert.equal(url.searchParams.has('client_secret'), false);
+  assert.doesNotMatch(session.authorizationUrl, new RegExp(GOOGLE_TEST_CLIENT_SECRET, 'u'));
+});
+
+test('Google authorization reports a clear error when the desktop client secret is missing', async () => {
+  const client = new GoogleAuthClient(new QueueCalendarTransport([]), createSecretStore());
+  await assert.rejects(
+    client.beginAuthorization({
+      clientId: 'desktop-client.apps.googleusercontent.com',
+      clientSecret: '',
+      refreshTokenSecretId: 'google-token',
+    }, 'http://127.0.0.1:49152/oauth2/callback'),
+    (error: unknown) =>
+      error instanceof GoogleAuthError &&
+      error.kind === 'configuration' &&
+      error.message === 'Google OAuth client secret is required.',
+  );
 });
 
 test('Google loopback receiver binds only to 127.0.0.1 and accepts one OAuth response', async (context) => {
@@ -390,6 +415,7 @@ test('Google authorization validates state and stores refresh tokens outside set
   const client = new GoogleAuthClient(transport, createSecretStore(secrets), () => 1_000);
   const configuration = {
     clientId: 'desktop-client.apps.googleusercontent.com',
+    clientSecret: GOOGLE_TEST_CLIENT_SECRET,
     refreshTokenSecretId: 'google-token',
   };
   const session = await client.beginAuthorization(
@@ -412,8 +438,43 @@ test('Google authorization validates state and stores refresh tokens outside set
 
   assert.equal(token.accessToken, 'access-token');
   assert.equal(secrets.get('google-token'), 'refresh-token');
-  assert.doesNotMatch(transport.requests[0]?.body ?? '', /client_secret/u);
-  assert.match(transport.requests[0]?.body ?? '', /code_verifier=/u);
+  const tokenBody = new URLSearchParams(transport.requests[0]?.body ?? '');
+  assert.equal(tokenBody.get('client_id'), configuration.clientId);
+  assert.equal(tokenBody.get('client_secret'), GOOGLE_TEST_CLIENT_SECRET);
+  assert.equal(tokenBody.get('code_verifier'), session.codeVerifier);
+  assert.equal(tokenBody.get('grant_type'), 'authorization_code');
+  assert.equal(tokenBody.get('redirect_uri'), session.redirectUri);
+});
+
+test('Google authentication errors never expose the configured client secret', async () => {
+  const transport = new QueueCalendarTransport([
+    jsonResponse(401, {
+      error: 'invalid_client',
+      error_description: `Rejected credential ${GOOGLE_TEST_CLIENT_SECRET}`,
+    }),
+  ]);
+  const client = new GoogleAuthClient(transport, createSecretStore());
+  const configuration = {
+    clientId: 'desktop-client.apps.googleusercontent.com',
+    clientSecret: GOOGLE_TEST_CLIENT_SECRET,
+    refreshTokenSecretId: 'google-token',
+  };
+  const session = await client.beginAuthorization(
+    configuration,
+    'http://127.0.0.1:49152/oauth2/callback',
+  );
+
+  await assert.rejects(
+    client.completeAuthorization(configuration, session, {
+      state: session.state,
+      code: 'authorization-code',
+      error: null,
+    }),
+    (error: unknown) =>
+      error instanceof GoogleAuthError &&
+      !error.message.includes(GOOGLE_TEST_CLIENT_SECRET) &&
+      error.message.includes('[redacted]'),
+  );
 });
 
 test('Google reconnect keeps the previous refresh token until account validation succeeds', async () => {
@@ -429,6 +490,7 @@ test('Google reconnect keeps the previous refresh token until account validation
   const client = new GoogleAuthClient(transport, createSecretStore(secrets));
   const configuration = {
     clientId: 'desktop-client.apps.googleusercontent.com',
+    clientSecret: GOOGLE_TEST_CLIENT_SECRET,
     refreshTokenSecretId: 'google-token',
   };
   const session = await client.beginAuthorization(
@@ -479,6 +541,7 @@ test('Google refresh, revocation, and revoked-grant errors preserve secure lifec
   ]);
   const configuration = {
     clientId: 'desktop-client.apps.googleusercontent.com',
+    clientSecret: GOOGLE_TEST_CLIENT_SECRET,
     refreshTokenSecretId: 'google-token',
   };
   const client = new GoogleAuthClient(transport, createSecretStore(secrets));
@@ -486,7 +549,11 @@ test('Google refresh, revocation, and revoked-grant errors preserve secure lifec
   assert.equal(await client.getAccessToken(configuration), 'refreshed-access-token');
   await client.disconnect(configuration);
   assert.equal(secrets.get('google-token'), '');
-  assert.match(transport.requests[0]?.body ?? '', /grant_type=refresh_token/u);
+  const refreshBody = new URLSearchParams(transport.requests[0]?.body ?? '');
+  assert.equal(refreshBody.get('client_id'), configuration.clientId);
+  assert.equal(refreshBody.get('client_secret'), GOOGLE_TEST_CLIENT_SECRET);
+  assert.equal(refreshBody.get('refresh_token'), 'refresh-token');
+  assert.equal(refreshBody.get('grant_type'), 'refresh_token');
   assert.match(transport.requests[1]?.body ?? '', /token=refresh-token/u);
 
   secrets.set('google-token', 'revoked-token');
@@ -1398,6 +1465,7 @@ function createGoogleProvider(
   return new GoogleCalendarProvider(
     () => ({
       clientId: 'desktop-client.apps.googleusercontent.com',
+      clientSecret: GOOGLE_TEST_CLIENT_SECRET,
       refreshTokenSecretId: 'google-token',
     }),
     {
