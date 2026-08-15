@@ -10,7 +10,6 @@ const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const REVOCATION_ENDPOINT = 'https://oauth2.googleapis.com/revoke';
 const EXPIRY_SKEW_MS = 60_000;
 const GOOGLE_OAUTH_LOG_PREFIX = '[Neuro Roadmap][Google OAuth]';
-const GOOGLE_SCOPE_PREFIX = 'https://www.googleapis.com/auth/';
 
 export const GOOGLE_CALENDAR_SCOPES = [
   'openid',
@@ -20,6 +19,33 @@ export const GOOGLE_CALENDAR_SCOPES = [
   'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
   'https://www.googleapis.com/auth/calendar.calendars',
 ] as const;
+
+export type GoogleOAuthCapability =
+  | 'openid'
+  | 'profile'
+  | 'email'
+  | 'calendar.events'
+  | 'calendar.calendarlist.readonly'
+  | 'calendar.calendars';
+
+export const GOOGLE_REQUIRED_CAPABILITIES = [
+  'openid',
+  'email',
+  'calendar.events',
+  'calendar.calendarlist.readonly',
+  'calendar.calendars',
+] as const satisfies readonly GoogleOAuthCapability[];
+
+const GOOGLE_SCOPE_CAPABILITIES: Readonly<Record<string, GoogleOAuthCapability>> = {
+  openid: 'openid',
+  profile: 'profile',
+  'https://www.googleapis.com/auth/userinfo.profile': 'profile',
+  email: 'email',
+  'https://www.googleapis.com/auth/userinfo.email': 'email',
+  'https://www.googleapis.com/auth/calendar.events': 'calendar.events',
+  'https://www.googleapis.com/auth/calendar.calendarlist.readonly': 'calendar.calendarlist.readonly',
+  'https://www.googleapis.com/auth/calendar.calendars': 'calendar.calendars',
+};
 
 export interface GoogleAuthConfiguration {
   readonly clientId: string;
@@ -279,20 +305,28 @@ export class GoogleAuthClient {
       );
     }
     const grantedScopes = response.scope.split(/\s+/u).filter((scope) => scope.length > 0);
-    const missingScopes = GOOGLE_CALENDAR_SCOPES.filter((scope) => !grantedScopes.includes(scope));
+    const normalizedGrantedCapabilities = Array.from(new Set(
+      grantedScopes
+        .map(normalizeGoogleScope)
+        .filter((capability): capability is GoogleOAuthCapability => capability !== null),
+    ));
+    const grantedCapabilities = new Set(normalizedGrantedCapabilities);
+    const missingRequiredCapabilities = GOOGLE_REQUIRED_CAPABILITIES.filter(
+      (capability) => !grantedCapabilities.has(capability),
+    );
     if (__NEURO_ROADMAP_DEV__) {
       console.info(GOOGLE_OAUTH_LOG_PREFIX, {
         requestedOAuthScopes: [...GOOGLE_CALENDAR_SCOPES],
         rawScope: response.scope,
         parsedGrantedScopes: [...grantedScopes],
-        normalizedGrantedCapabilities: grantedScopes.map(normalizeGoogleScopeCapability),
-        missingRequiredCapabilities: missingScopes.map(normalizeGoogleScopeCapability),
+        normalizedGrantedCapabilities,
+        missingRequiredCapabilities,
       });
     }
-    if (missingScopes.length > 0) {
+    if (missingRequiredCapabilities.length > 0) {
       throw new GoogleAuthError(
         'permission',
-        `Google authorization omitted required permissions: ${missingScopes.join(', ')}.`,
+        `Google authorization omitted required permissions: ${missingRequiredCapabilities.join(', ')}.`,
       );
     }
     if (response.refresh_token !== undefined) {
@@ -399,10 +433,8 @@ function oauthErrorCode(value: unknown): string | null {
   return stringValue(objectValue(value)['error']);
 }
 
-function normalizeGoogleScopeCapability(scope: string): string {
-  return scope.startsWith(GOOGLE_SCOPE_PREFIX)
-    ? scope.slice(GOOGLE_SCOPE_PREFIX.length)
-    : scope;
+export function normalizeGoogleScope(scope: string): GoogleOAuthCapability | null {
+  return GOOGLE_SCOPE_CAPABILITIES[scope] ?? null;
 }
 
 function randomUrlSafeValue(byteCount: number): string {

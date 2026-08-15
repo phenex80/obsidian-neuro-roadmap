@@ -28,8 +28,10 @@ import type { CalendarEventProjection } from '../src/core/CalendarCore';
 import { CalendarExportService } from '../src/core/CalendarExportService';
 import {
   GOOGLE_CALENDAR_SCOPES,
+  GOOGLE_REQUIRED_CAPABILITIES,
   GoogleAuthClient,
   GoogleAuthError,
+  normalizeGoogleScope,
 } from '../src/calendar/GoogleAuth';
 import {
   startGoogleLoopbackServer,
@@ -444,6 +446,81 @@ test('Google authorization validates state and stores refresh tokens outside set
   assert.equal(tokenBody.get('code_verifier'), session.codeVerifier);
   assert.equal(tokenBody.get('grant_type'), 'authorization_code');
   assert.equal(tokenBody.get('redirect_uri'), session.redirectUri);
+});
+
+test('Google OAuth canonicalizes the real token scope aliases and accepts all required capabilities', async () => {
+  const grantedScopes = [
+    'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
+    'https://www.googleapis.com/auth/calendar.calendars',
+    'openid',
+    'https://www.googleapis.com/auth/calendar.events',
+    'https://www.googleapis.com/auth/userinfo.profile',
+    'https://www.googleapis.com/auth/userinfo.email',
+  ];
+  const expectedCapabilities = [
+    'calendar.calendarlist.readonly',
+    'calendar.calendars',
+    'openid',
+    'calendar.events',
+    'profile',
+    'email',
+  ];
+  assert.deepEqual(grantedScopes.map(normalizeGoogleScope), expectedCapabilities);
+
+  const token = await authorizeGoogleWithScopes(grantedScopes);
+  assert.deepEqual(token.grantedScopes, grantedScopes);
+  assert.deepEqual(
+    GOOGLE_REQUIRED_CAPABILITIES.filter(
+      (required) => !new Set(grantedScopes.map(normalizeGoogleScope)).has(required),
+    ),
+    [],
+  );
+});
+
+test('Google OAuth uses explicit identity aliases and rejects unknown scopes', () => {
+  assert.equal(normalizeGoogleScope('profile'), 'profile');
+  assert.equal(
+    normalizeGoogleScope('https://www.googleapis.com/auth/userinfo.profile'),
+    'profile',
+  );
+  assert.equal(normalizeGoogleScope('email'), 'email');
+  assert.equal(
+    normalizeGoogleScope('https://www.googleapis.com/auth/userinfo.email'),
+    'email',
+  );
+  assert.equal(normalizeGoogleScope('https://example.com/auth/calendar.events'), null);
+  assert.equal(normalizeGoogleScope('userinfo.email'), null);
+});
+
+test('Google OAuth treats profile as optional but keeps email and calendar events required', async () => {
+  const requiredScopesWithoutProfile = [
+    'openid',
+    'https://www.googleapis.com/auth/userinfo.email',
+    'https://www.googleapis.com/auth/calendar.events',
+    'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
+    'https://www.googleapis.com/auth/calendar.calendars',
+  ];
+  await authorizeGoogleWithScopes(requiredScopesWithoutProfile);
+
+  await assert.rejects(
+    authorizeGoogleWithScopes(requiredScopesWithoutProfile.filter(
+      (scope) => scope !== 'https://www.googleapis.com/auth/userinfo.email',
+    )),
+    (error: unknown) =>
+      error instanceof GoogleAuthError &&
+      error.kind === 'permission' &&
+      error.message.includes('email'),
+  );
+
+  await assert.rejects(
+    authorizeGoogleWithScopes(requiredScopesWithoutProfile.filter(
+      (scope) => scope !== 'https://www.googleapis.com/auth/calendar.events',
+    )),
+    (error: unknown) =>
+      error instanceof GoogleAuthError &&
+      error.kind === 'permission' &&
+      error.message.includes('calendar.events'),
+  );
 });
 
 test('Google authentication errors never expose the configured client secret', async () => {
@@ -1442,6 +1519,32 @@ class QueueCalendarTransport implements CalendarHttpTransport {
 
 function jsonResponse(status: number, json: unknown): CalendarHttpResponse {
   return { status, headers: {}, json, text: JSON.stringify(json) };
+}
+
+async function authorizeGoogleWithScopes(grantedScopes: readonly string[]) {
+  const client = new GoogleAuthClient(
+    new QueueCalendarTransport([jsonResponse(200, {
+      access_token: 'access-token',
+      refresh_token: 'refresh-token',
+      expires_in: 3600,
+      scope: grantedScopes.join(' '),
+    })]),
+    createSecretStore(),
+  );
+  const configuration = {
+    clientId: 'desktop-client.apps.googleusercontent.com',
+    clientSecret: GOOGLE_TEST_CLIENT_SECRET,
+    refreshTokenSecretId: 'google-token',
+  };
+  const session = await client.beginAuthorization(
+    configuration,
+    'http://127.0.0.1:49152/oauth2/callback',
+  );
+  return client.completeAuthorization(configuration, session, {
+    state: session.state,
+    code: 'authorization-code',
+    error: null,
+  });
 }
 
 function createSecretStore(values = new Map<string, string>()) {
