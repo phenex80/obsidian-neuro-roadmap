@@ -35,6 +35,20 @@ import type {
   CalendarHttpResponse,
   CalendarHttpTransport,
 } from '../src/calendar/CalendarHttpTransport';
+import {
+  GoogleCalendarError,
+  GoogleCalendarProvider,
+  googleEventId,
+  toGoogleCalendarEvent,
+} from '../src/calendar/GoogleCalendarProvider';
+import type {
+  CalendarDescriptor,
+  CalendarProvider,
+  CalendarProviderCapabilities,
+  ExternalCalendarEventRef,
+} from '../src/core/CalendarProvider';
+import { CalendarSyncEngine } from '../src/core/CalendarSyncEngine';
+import { CalendarSyncController } from '../src/core/CalendarSyncController';
 import { buildSubjectSummaries } from '../src/core/DashboardMetrics';
 import { classifyHorizon, formatRelativeTaskDate } from '../src/core/HorizonPlanner';
 import { migrateRoadmapSettingsData } from '../src/core/SettingsMigration';
@@ -368,6 +382,198 @@ test('Google refresh, revocation, and revoked-grant errors preserve secure lifec
     revoked.getAccessToken(configuration),
     (error: unknown) => error instanceof GoogleAuthError && error.kind === 'authentication-expired',
   );
+});
+
+test('Google provider maps Calendar Core all-day, free, reminder, and Unicode semantics', async () => {
+  const event = createCalendarEvent('stable-google-id', {
+    title: 'ISKB02 · Skúška č. 1',
+    description: 'Zdroj: Žluťoučký kôň',
+    reminderMinutes: 1440,
+  });
+  const payload = toGoogleCalendarEvent(event);
+
+  assert.equal(payload.summary, 'ISKB02 · Skúška č. 1');
+  assert.equal(payload.description, 'Zdroj: Žluťoučký kôň');
+  assert.deepEqual(payload.start, { date: '2026-10-10' });
+  assert.deepEqual(payload.end, { date: '2026-10-11' });
+  assert.equal(payload.transparency, 'transparent');
+  assert.equal(payload.visibility, 'default');
+  assert.deepEqual(payload.reminders, {
+    useDefault: false,
+    overrides: [{ method: 'popup', minutes: 1440 }],
+  });
+});
+
+test('Google provider lists writable calendars and creates a dedicated calendar', async () => {
+  const transport = new QueueCalendarTransport([
+    jsonResponse(200, {
+      items: [
+        { id: 'secondary', summary: 'Study', accessRole: 'writer' },
+        { id: 'primary@example.com', summary: 'Primary', primary: true, accessRole: 'owner' },
+      ],
+    }),
+    jsonResponse(200, { id: 'created-calendar', summary: 'Neuro Roadmap' }),
+  ]);
+  const provider = createGoogleProvider(transport);
+
+  assert.deepEqual(await provider.listCalendars(), [
+    { id: 'primary@example.com', name: 'Primary', primary: true },
+    { id: 'secondary', name: 'Study', primary: false },
+  ]);
+  assert.deepEqual(await provider.createCalendar('Neuro Roadmap'), {
+    id: 'created-calendar',
+    name: 'Neuro Roadmap',
+    primary: false,
+  });
+  assert.match(transport.requests[0]?.url ?? '', /minAccessRole=writer/u);
+  assert.deepEqual(JSON.parse(transport.requests[1]?.body ?? '{}'), {
+    summary: 'Neuro Roadmap',
+    description: 'One-way calendar projection managed by Obsidian Neuro Roadmap.',
+  });
+});
+
+test('Google provider uses deterministic event IDs and treats create conflicts as idempotent', async () => {
+  const event = createCalendarEvent('stable-google-id');
+  const expectedId = await googleEventId(event.internalItemId);
+  const transport = new QueueCalendarTransport([
+    jsonResponse(409, { error: { code: 409, message: 'The requested identifier already exists.' } }),
+  ]);
+  const provider = createGoogleProvider(transport);
+  const reference = await provider.createEvent('calendar-id', event);
+
+  assert.deepEqual(reference, { calendarId: 'calendar-id', eventId: expectedId });
+  assert.equal(JSON.parse(transport.requests[0]?.body ?? '{}').id, expectedId);
+});
+
+test('Google provider refreshes once on 401 and backs off for quota errors', async () => {
+  let invalidations = 0;
+  const waits: number[] = [];
+  const transport = new QueueCalendarTransport([
+    jsonResponse(401, { error: { message: 'Invalid Credentials' } }),
+    {
+      ...jsonResponse(429, { error: { message: 'Rate limit', errors: [{ reason: 'rateLimitExceeded' }] } }),
+      headers: { 'Retry-After': '2' },
+    },
+    jsonResponse(200, { items: [] }),
+  ]);
+  const provider = createGoogleProvider(
+    transport,
+    { invalidate: () => { invalidations += 1; } },
+    async (milliseconds) => { waits.push(milliseconds); },
+  );
+
+  assert.deepEqual(await provider.listCalendars(), []);
+  assert.equal(invalidations, 1);
+  assert.deepEqual(waits, [2_000]);
+});
+
+test('Google provider classifies revoked permissions, missing events, and hard permission errors', async () => {
+  const missingProvider = createGoogleProvider(new QueueCalendarTransport([
+    jsonResponse(404, { error: { message: 'Not found' } }),
+  ]));
+  assert.equal(await missingProvider.eventExists({ calendarId: 'calendar', eventId: 'event' }), false);
+
+  const forbiddenProvider = createGoogleProvider(new QueueCalendarTransport([
+    jsonResponse(403, { error: { message: 'Forbidden', errors: [{ reason: 'forbidden' }] } }),
+  ]));
+  await assert.rejects(
+    forbiddenProvider.listCalendars(),
+    (error: unknown) => error instanceof GoogleCalendarError && error.kind === 'permission',
+  );
+});
+
+test('provider-neutral reconciliation creates, updates, and deletes the same managed event', async () => {
+  const fixture = createSyncFixture();
+  const original = createNode('exam', {
+    source: 'frontmatter',
+    calendarType: 'exam',
+    dueDate: '2026-10-10',
+    title: 'Original title',
+  });
+  const created = await fixture.engine.reconcile([original]);
+  assert.equal(created.created, 1);
+  assert.equal(fixture.provider.created.length, 1);
+  const originalReference = fixture.provider.created[0]?.reference;
+
+  const changed = await fixture.engine.reconcile([{
+    ...original,
+    title: 'Renamed title',
+    dueDate: '2026-11-11',
+  }]);
+  assert.equal(changed.updated, 1);
+  assert.deepEqual(fixture.provider.updated[0]?.reference, originalReference);
+
+  const deleted = await fixture.engine.reconcile([]);
+  assert.equal(deleted.deleted, 1);
+  assert.deepEqual(fixture.provider.deleted[0], originalReference);
+  assert.deepEqual(fixture.state.syncRecords, {});
+});
+
+test('provider-neutral reconciliation recreates externally deleted events without duplicates', async () => {
+  const fixture = createSyncFixture();
+  const node = createNode('milestone', {
+    source: 'frontmatter',
+    calendarType: 'milestone',
+    dueDate: '2026-10-10',
+  });
+  await fixture.engine.reconcile([node]);
+  fixture.provider.missingOnNextUpdate = true;
+
+  const report = await fixture.engine.reconcile([node], { verifyRemote: true });
+  assert.equal(report.recreated, 1);
+  assert.equal(fixture.provider.created.length, 2);
+  assert.equal(Object.keys(fixture.state.syncRecords).length, 1);
+});
+
+test('provider-neutral reconciliation scopes records by provider and honors explicit exclusion', async () => {
+  const fixture = createSyncFixture();
+  fixture.state.syncRecords['microsoft:other'] = {
+    internalItemId: 'other',
+    provider: 'microsoft',
+    externalCalendarId: 'outlook-calendar',
+    externalEventId: 'outlook-event',
+  };
+  const node = createNode('exam', {
+    source: 'frontmatter',
+    calendarType: 'exam',
+    dueDate: '2026-10-10',
+  });
+  await fixture.engine.reconcile([node]);
+  const internalItemId = Object.values(fixture.state.syncRecords)
+    .find((record) => record.provider === 'google')?.internalItemId;
+  assert.ok(internalItemId !== undefined);
+  fixture.state.itemOverrides[internalItemId] = 'exclude';
+
+  const report = await fixture.engine.reconcile([node]);
+  assert.equal(report.deleted, 1);
+  assert.ok(fixture.state.syncRecords['microsoft:other'] !== undefined);
+  assert.equal(Object.values(fixture.state.syncRecords).some((record) => record.provider === 'google'), false);
+});
+
+test('calendar sync controller debounces changes and serializes explicit sync', async () => {
+  const scheduled: (() => void)[] = [];
+  const runs: string[][] = [];
+  const controller = new CalendarSyncController(
+    async (nodes) => {
+      runs.push(nodes.map((node) => node.id));
+      return { created: 0, updated: 0, deleted: 0, recreated: 0, unchanged: 0, completedAt: '2026-08-15T00:00:00.000Z' };
+    },
+    () => 2_000,
+    async () => undefined,
+    async () => undefined,
+    (callback) => {
+      scheduled.push(callback);
+      return scheduled.length as ReturnType<typeof setTimeout>;
+    },
+    () => undefined,
+  );
+  controller.schedule([createNode('first')]);
+  controller.schedule([createNode('latest')]);
+  scheduled.at(-1)?.();
+  await controller.syncNow([createNode('manual')]);
+
+  assert.deepEqual(runs, [['latest'], ['manual']]);
+  controller.dispose();
 });
 
 test('calendar export service distinguishes filtered selection from all eligible items', async () => {
@@ -1054,4 +1260,101 @@ function createSecretStore(values = new Map<string, string>()) {
       values.set(id, value);
     },
   };
+}
+
+function createGoogleProvider(
+  transport: CalendarHttpTransport,
+  callbacks: { readonly invalidate?: () => void } = {},
+  wait: (milliseconds: number) => Promise<void> = async () => undefined,
+): GoogleCalendarProvider {
+  return new GoogleCalendarProvider(
+    () => ({
+      clientId: 'desktop-client.apps.googleusercontent.com',
+      refreshTokenSecretId: 'google-token',
+    }),
+    {
+      getAccessToken: async () => 'access-token',
+      invalidateAccessToken: () => callbacks.invalidate?.(),
+    },
+    transport,
+    wait,
+    () => 0,
+  );
+}
+
+class MemoryCalendarProvider implements CalendarProvider {
+  readonly id = 'google';
+  readonly displayName = 'Google Calendar';
+  readonly capabilities: CalendarProviderCapabilities = {
+    export: false,
+    remoteCalendars: true,
+    create: true,
+    update: true,
+    delete: true,
+    reminders: true,
+  };
+  readonly created: { reference: ExternalCalendarEventRef; event: CalendarEventProjection }[] = [];
+  readonly updated: { reference: ExternalCalendarEventRef; event: CalendarEventProjection }[] = [];
+  readonly deleted: ExternalCalendarEventRef[] = [];
+  missingOnNextUpdate = false;
+  private sequence = 0;
+
+  async initialize() {
+    return { connected: true };
+  }
+
+  async listCalendars(): Promise<readonly CalendarDescriptor[]> {
+    return [{ id: 'google-calendar', name: 'Neuro Roadmap', primary: false }];
+  }
+
+  async createEvent(
+    calendarId: string,
+    event: CalendarEventProjection,
+  ): Promise<ExternalCalendarEventRef> {
+    const reference = { calendarId, eventId: `event-${++this.sequence}` };
+    this.created.push({ reference, event });
+    return reference;
+  }
+
+  async updateEvent(
+    reference: ExternalCalendarEventRef,
+    event: CalendarEventProjection,
+  ): Promise<void> {
+    if (this.missingOnNextUpdate) {
+      this.missingOnNextUpdate = false;
+      throw { kind: 'not-found' };
+    }
+    this.updated.push({ reference, event });
+  }
+
+  async deleteEvent(reference: ExternalCalendarEventRef): Promise<void> {
+    this.deleted.push(reference);
+  }
+}
+
+function createSyncFixture() {
+  let identityRecords: Record<string, string> = {};
+  let sequence = 0;
+  const identities = new CalendarIdentityManager(
+    {} as App,
+    () => identityRecords,
+    async (records) => { identityRecords = records; },
+    () => `internal-${++sequence}`,
+  );
+  const provider = new MemoryCalendarProvider();
+  const settings = roadmapSettingsSchema.parse({});
+  const state = settings.calendarState;
+  const engine = new CalendarSyncEngine(
+    identities,
+    provider,
+    () => ({
+      settings: settings.calendar,
+      state,
+      calendarId: 'google-calendar',
+      vaultName: 'Academic Vault',
+    }),
+    async (records) => { state.syncRecords = records; },
+    () => new Date('2026-08-15T00:00:00.000Z'),
+  );
+  return { engine, provider, state };
 }
