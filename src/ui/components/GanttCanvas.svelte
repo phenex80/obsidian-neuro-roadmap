@@ -58,7 +58,7 @@
   } = $props();
 
   const EMPTY_ROW_COUNT = 3;
-  const UNASSIGNED_SUBJECT = 'Nezaradené';
+  const UNASSIGNED_SUBJECT = 'Unassigned';
   const UNASSIGNED_PROJECT = '__unassigned-project__';
 
   interface HeaderSegment {

@@ -35,7 +35,7 @@
   {#each subjectSummaries as summary (summary.subject)}
     <article class="dashboard-card" title={summary.subject}>
       <header class="card-header">
-        <h2>{formatEntityLabel(summary.subject, 'Nezaradené')}</h2>
+        <h2>{formatEntityLabel(summary.subject, 'Unassigned')}</h2>
         <span class="completion-count">{summary.completedTasks}/{summary.totalTasks}</span>
       </header>
 
@@ -44,7 +44,7 @@
         <span>Task completion</span>
       </div>
 
-      <div class="mini-timeline" aria-label={`Timeline for ${formatEntityLabel(summary.subject, 'Nezaradené')}`}>
+      <div class="mini-timeline" aria-label={`Timeline for ${formatEntityLabel(summary.subject, 'Unassigned')}`}>
         <div class="mini-track" aria-hidden="true"></div>
         {#each summary.overview as item (item.key)}
           <span

@@ -66,7 +66,11 @@ See [calendar](docs/calendar.md) and [Google Calendar setup](docs/google-calenda
 
 Roadmap processing is local to the vault. ICS export is local. Google Calendar is an optional, explicit desktop connection. Revolut and Ko-fi are explicit external links only; no donor tracking or funding-service API is used. Details: [privacy](docs/privacy.md).
 
-## Support the project
+## Project status and support
+
+Neuro Roadmap began as a personal hobby project to solve problems I encountered in my own academic planning. I decided to share it publicly so that anyone who finds the approach useful can use it as well.
+
+Feedback, bug reports, suggestions, and financial support are very welcome. The project is maintained in my spare time, so feedback or donations do not imply a commitment to provide support, implement requested features, or resolve issues within a particular timeframe. I will continue developing the project as my time and its priorities allow.
 
 Voluntary contributions do not unlock features or change plugin behavior.
 

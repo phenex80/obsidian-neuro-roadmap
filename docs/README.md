@@ -11,3 +11,4 @@
 - [Development](development.md)
 - [Beta testing](beta-testing.md)
 - [Release checklist](release-checklist.md)
+- [Release notes draft: 0.1.0](release-notes-0.1.0.md)

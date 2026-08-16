@@ -90,7 +90,7 @@
   </div>
 
   <p class="context-line">
-    <span>{formatEntityLabel(node.subject, 'Nezaradené')}</span>
+    <span>{formatEntityLabel(node.subject, 'Unassigned')}</span>
     {#if node.project !== undefined}
       <span aria-hidden="true">·</span>
       <span>{formatEntityLabel(node.project, node.project)}</span>

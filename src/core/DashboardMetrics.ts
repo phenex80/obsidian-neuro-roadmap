@@ -32,7 +32,7 @@ export function buildSubjectSummaries(
 ): SubjectSummary[] {
   const groups = new Map<string, RoadmapNode[]>();
   for (const node of items) {
-    const subject = node.subject ?? 'Nezaradené';
+    const subject = node.subject ?? 'Unassigned';
     const subjectNodes = groups.get(subject) ?? [];
     subjectNodes.push(node);
     groups.set(subject, subjectNodes);
@@ -42,8 +42,8 @@ export function buildSubjectSummaries(
     .map(([subject, subjectNodes]) => createSubjectSummary(subject, subjectNodes, today))
     .filter((summary) => summary.totalTasks > 0)
     .sort((left, right) =>
-      formatEntityLabel(left.subject, 'Nezaradené').localeCompare(
-        formatEntityLabel(right.subject, 'Nezaradené'),
+      formatEntityLabel(left.subject, 'Unassigned').localeCompare(
+        formatEntityLabel(right.subject, 'Unassigned'),
       ),
     );
 }
