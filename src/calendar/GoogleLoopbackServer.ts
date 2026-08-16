@@ -1,5 +1,4 @@
 import { Platform } from 'obsidian';
-import type { Server } from 'node:http';
 import type { GoogleAuthorizationResponse } from './GoogleAuth';
 
 const CALLBACK_PATH = '/';
@@ -11,13 +10,59 @@ export interface GoogleLoopbackSession {
   close(): void;
 }
 
-export interface GoogleLoopbackRuntime {
-  readonly isDesktopApp: boolean;
-  loadHttpModule(): typeof import('node:http');
+/**
+ * The small part of Node's HTTP surface used by the loopback receiver.
+ *
+ * Keeping this structural type local prevents a Node module from becoming a
+ * top-level dependency of the mobile-loadable plugin module. The actual
+ * module is acquired only after the desktop platform check below.
+ */
+interface LoopbackRequest {
+  readonly url?: string;
 }
 
-function loadDesktopHttpModule(): typeof import('node:http') {
-  return require('http') as typeof import('node:http');
+interface LoopbackResponse {
+  writeHead(statusCode: number, headers: Record<string, string>): void;
+  end(body: string): void;
+}
+
+interface LoopbackAddress {
+  readonly port: number;
+}
+
+interface LoopbackServer {
+  once(event: 'error', listener: (error: Error) => void): this;
+  once(event: 'listening', listener: () => void): this;
+  off(event: 'error', listener: (error: Error) => void): this;
+  off(event: 'listening', listener: () => void): this;
+  listen(port: number, hostname: string): this;
+  address(): LoopbackAddress | string | null;
+  close(): this;
+}
+
+interface LoopbackHttpModule {
+  createServer(
+    listener: (request: LoopbackRequest, response: LoopbackResponse) => void,
+  ): LoopbackServer;
+}
+
+export interface GoogleLoopbackRuntime {
+  readonly isDesktopApp: boolean;
+  loadHttpModule(): LoopbackHttpModule;
+}
+
+function loadDesktopHttpModule(): LoopbackHttpModule {
+  const desktopRequire: (moduleId: string) => unknown = require;
+  const httpModule = desktopRequire('http');
+  if (!isLoopbackHttpModule(httpModule)) {
+    throw new Error('Google OAuth callback server could not load Node HTTP on desktop.');
+  }
+  return httpModule;
+}
+
+function isLoopbackHttpModule(value: unknown): value is LoopbackHttpModule {
+  return typeof value === 'object' && value !== null && 'createServer' in value &&
+    typeof value.createServer === 'function';
 }
 
 const DEFAULT_RUNTIME: GoogleLoopbackRuntime = {
@@ -45,7 +90,7 @@ export async function startGoogleLoopbackServer(
     resolveResponse = resolve;
     rejectResponse = reject;
   });
-  let server: Server | null = createServer((request, reply) => {
+  let server: LoopbackServer | null = createServer((request, reply) => {
     const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
     if (requestUrl.pathname !== CALLBACK_PATH) {
       reply.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });

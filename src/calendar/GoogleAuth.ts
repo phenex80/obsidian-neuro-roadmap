@@ -3,13 +3,10 @@ import type {
   CalendarHttpTransport,
 } from './CalendarHttpTransport';
 
-declare const __NEURO_ROADMAP_DEV__: boolean;
-
 const AUTHORIZATION_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const REVOCATION_ENDPOINT = 'https://oauth2.googleapis.com/revoke';
 const EXPIRY_SKEW_MS = 60_000;
-const GOOGLE_OAUTH_LOG_PREFIX = '[Neuro Roadmap][Google OAuth]';
 
 export const GOOGLE_CALENDAR_SCOPES = [
   'openid',
@@ -314,15 +311,6 @@ export class GoogleAuthClient {
     const missingRequiredCapabilities = GOOGLE_REQUIRED_CAPABILITIES.filter(
       (capability) => !grantedCapabilities.has(capability),
     );
-    if (__NEURO_ROADMAP_DEV__) {
-      console.info(GOOGLE_OAUTH_LOG_PREFIX, {
-        requestedOAuthScopes: [...GOOGLE_CALENDAR_SCOPES],
-        rawScope: response.scope,
-        parsedGrantedScopes: [...grantedScopes],
-        normalizedGrantedCapabilities,
-        missingRequiredCapabilities,
-      });
-    }
     if (missingRequiredCapabilities.length > 0) {
       throw new GoogleAuthError(
         'permission',

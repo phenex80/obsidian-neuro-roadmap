@@ -546,7 +546,7 @@ test('Google loopback receiver binds only to 127.0.0.1 and accepts one OAuth res
     isDesktopApp: true,
     loadHttpModule: () => {
       httpModuleAccesses += 1;
-      return { createServer } as typeof import('node:http');
+      return { createServer };
     },
   };
   let loopback: Awaited<ReturnType<typeof startGoogleLoopbackServer>>;
@@ -583,7 +583,7 @@ test('Google loopback rejects mobile before accessing the Node HTTP module', asy
     isDesktopApp: false,
     loadHttpModule: () => {
       httpModuleAccesses += 1;
-      return { createServer } as typeof import('node:http');
+      return { createServer };
     },
   };
 
