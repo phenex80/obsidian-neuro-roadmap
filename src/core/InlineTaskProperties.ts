@@ -20,7 +20,7 @@ export interface InlineTaskBlockIdToken {
 }
 
 const INLINE_PROPERTY_PATTERN =
-  /\[([^\[\]:\r\n]+)::\s*(\[\[[^\]]+\]\]|[^\]]*?)\]/gu;
+  /\[([^[\]:\r\n]+)::\s*(\[\[[^\]]+\]\]|[^\]]*?)\]/gu;
 const MANAGED_BLOCK_ID_PATTERN = /\s+\^(nr-cal-[A-Za-z0-9-]+)\s*$/u;
 const EDITABLE_FIELDS: readonly EditableTaskProperty[] = [
   'startDate',
@@ -128,7 +128,7 @@ function includeLeadingWhitespace(line: string, index: number): number {
 }
 
 function assertSafePropertyKey(key: string): void {
-  if (key.trim().length === 0 || /[\[\]:\r\n]/u.test(key)) {
+  if (key.trim().length === 0 || /[[\]:\r\n]/u.test(key)) {
     throw new Error('Invalid inline task property key.');
   }
 }

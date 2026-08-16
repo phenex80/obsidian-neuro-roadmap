@@ -50,28 +50,28 @@
   border-color: var(--interactive-accent);
 }
 
-.markdown-source-view.mod-cm6.is-live-preview button.nr-task-metadata-action {
+.markdown-source-view.mod-cm6.is-live-preview .cm-content .nr-task-metadata-row button.nr-task-metadata-action {
   position: relative;
   display: inline-grid;
   flex: 0 0 auto;
-  width: 1.75rem !important;
-  height: 1.75rem !important;
-  min-width: 1.75rem !important;
-  min-height: 1.75rem !important;
-  max-width: 1.75rem !important;
-  max-height: 1.75rem !important;
+  width: 1.75rem;
+  height: 1.75rem;
+  min-width: 1.75rem;
+  min-height: 1.75rem;
+  max-width: 1.75rem;
+  max-height: 1.75rem;
   box-sizing: border-box;
   place-items: center;
-  margin: 0 !important;
-  padding: 0 !important;
-  border: 0 !important;
-  border-radius: 0 !important;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
   appearance: none;
-  background: transparent !important;
+  background: transparent;
   color: var(--text-muted);
-  box-shadow: none !important;
+  box-shadow: none;
   cursor: pointer;
-  line-height: 1 !important;
+  line-height: 1;
   vertical-align: middle;
 }
 
@@ -97,20 +97,16 @@
   background: var(--background-modifier-hover);
 }
 
-.markdown-source-view.mod-cm6.is-live-preview button.nr-task-metadata-action:focus-visible {
-  outline: none !important;
-}
-
 .markdown-source-view.mod-cm6.is-live-preview button.nr-task-metadata-action:focus-visible::before {
   outline: var(--border-width) solid var(--interactive-accent);
   outline-offset: var(--border-width);
 }
 
-.markdown-source-view.mod-cm6.is-live-preview button.nr-task-metadata-action svg {
+.markdown-source-view.mod-cm6.is-live-preview .cm-content .nr-task-metadata-row button.nr-task-metadata-action svg {
   position: relative;
   z-index: 1;
-  width: 1rem !important;
-  height: 1rem !important;
+  width: 1rem;
+  height: 1rem;
   stroke-width: var(--icon-stroke);
 }
 

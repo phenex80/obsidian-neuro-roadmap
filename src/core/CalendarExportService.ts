@@ -64,12 +64,11 @@ export class CalendarExportService {
     context: CalendarExportContext,
   ): Promise<CalendarExportResult> {
     const events = await this.projectNodes(nodes, context);
-    const exportEvents = this.provider.exportEvents;
-    if (exportEvents === undefined) {
+    if (this.provider.exportEvents === undefined) {
       throw new Error(`${this.provider.displayName} does not support calendar export.`);
     }
     return {
-      content: exportEvents.call(this.provider, events),
+      content: this.provider.exportEvents(events),
       eventCount: events.length,
     };
   }

@@ -30,7 +30,7 @@ import {
 
 const INLINE_TASK_PATTERN = /^\s*[-*+]\s+\[([^\]])\]\s*(.*?)\s*$/u;
 const INLINE_PROPERTY_PATTERN =
-  /\[([^\[\]:\r\n]+)::\s*(\[\[[^\]]+\]\]|[^\]]*?)\]/gu;
+  /\[([^[\]:\r\n]+)::\s*(\[\[[^\]]+\]\]|[^\]]*?)\]/gu;
 const BLOCK_ID_PATTERN = /\s+\^([A-Za-z0-9-]+)\s*$/u;
 
 type FrontmatterValues = Record<string, unknown>;
