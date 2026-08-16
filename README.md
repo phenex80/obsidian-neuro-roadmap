@@ -47,7 +47,7 @@ See [tasks and metadata](docs/tasks-and-metadata.md) for supported fields and [c
 
 ## Calendar integration
 
-Calendar is a one-way projection from Markdown: Markdown stays authoritative. Eligible hard dates are included by default; regular tasks are opt-in. Export ICS locally on any supported platform, or optionally connect Google Calendar on desktop after configuring a Google OAuth client. Google edits are never imported into Markdown.
+Calendar is a one-way projection from Markdown: Markdown stays authoritative. Eligible hard dates are included by default; regular tasks are opt-in. Export ICS locally on any supported platform, or optionally connect Google Calendar on desktop after configuring a Google OAuth client. Google edits are never imported into Markdown. The current setup uses your own Google OAuth client rather than a developer-operated authentication service; this adds setup steps but keeps authentication and Calendar access directly between your local Obsidian installation and Google. See the [Google Calendar setup guide](docs/google-calendar-setup.md).
 
 See [calendar](docs/calendar.md) and [Google Calendar setup](docs/google-calendar-setup.md).
 

@@ -4,6 +4,14 @@ Neuro Roadmap treats Markdown as the only source of truth. Google Calendar is a 
 
 Direct sync is available in the Obsidian desktop app. Mobile users retain the complete roadmap and generic ICS export, but the official desktop loopback OAuth flow cannot run in Obsidian mobile.
 
+## Why does Neuro Roadmap require my own Google OAuth credentials?
+
+Neuro Roadmap currently uses a bring-your-own OAuth client model. This requires a few additional setup steps in Google Cloud Console and is less convenient than the familiar one-click “Connect with Google” experience.
+
+This is an intentional trade-off. Neuro Roadmap is a spare-time project and does not operate a central authentication service or backend for Google Calendar access. Your OAuth configuration and authorization remain between your local Obsidian installation and Google; credentials, tokens, and Calendar requests are not routed through infrastructure operated by Neuro Roadmap or its developer.
+
+This keeps the integration independent of a developer-operated authentication service and minimizes the amount of trust you need to place in the project. The downside is the additional initial configuration. A simpler connection flow may be considered in the future, but only if it can be provided without unnecessarily increasing the project's infrastructure, privacy, security, and maintenance requirements.
+
 ## Google Cloud project and OAuth client
 
 The project owner must configure Google Cloud before users can connect:
