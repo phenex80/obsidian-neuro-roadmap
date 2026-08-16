@@ -137,6 +137,6 @@ function calendarDescription(
     `Status: ${node.status}`,
     overdue ? 'Overdue: yes' : undefined,
     `Source: ${source}`,
-    'Managed by Obsidian Neuro Roadmap',
+    'Managed by Neuro Roadmap',
   ].filter((line): line is string => line !== undefined).join('\n');
 }

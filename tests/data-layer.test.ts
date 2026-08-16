@@ -118,6 +118,7 @@ import {
 import { describeCalendarAction } from '../src/core/CalendarAction';
 import { TaskMetadataEditorIntegration } from '../src/ui/editor/TaskMetadataEditorExtension';
 import { InlineFileMutationQueue } from '../src/core/InlineFileMutationQueue';
+import { openSupportLink, SUPPORT_LINKS } from '../src/core/SupportLinks';
 
 const GOOGLE_TEST_CLIENT_SECRET = 'desktop-client-secret-value';
 
@@ -131,6 +132,24 @@ test('semantic property aliases adapt Slovak and English vault conventions', () 
   assert.equal(readMappedValue({ course: 'ISKB02' }, keys.subject)?.value, 'ISKB02');
   assert.equal(readMappedValue({ deadline: '2026-10-10' }, keys.dueDate)?.value, '2026-10-10');
   assert.equal(readMappedValue({ due: '2026-10-11' }, keys.dueDate)?.value, '2026-10-11');
+});
+
+test('support links use fixed destinations and open only through an explicit action', () => {
+  const opened: Array<readonly [string, string | undefined, string | undefined]> = [];
+  const openExternal = (url: string, target?: string, features?: string): WindowProxy | null => {
+    opened.push([url, target, features]);
+    return null;
+  };
+
+  assert.equal(opened.length, 0);
+  assert.equal(
+    SUPPORT_LINKS.revolut.url,
+    'https://checkout.revolut.com/pay/ae52e66f-c30d-46fc-b7f0-7df89097b3e0',
+  );
+  assert.equal(SUPPORT_LINKS.kofi.url, 'https://ko-fi.com/J6C5255736');
+
+  openSupportLink('revolut', openExternal);
+  assert.deepEqual(opened, [[SUPPORT_LINKS.revolut.url, '_blank', 'noopener,noreferrer']]);
 });
 
 test('semantic status and priority values normalize aliases and diacritics', () => {
@@ -800,7 +819,7 @@ test('Google provider lists writable calendars and creates a dedicated calendar'
   assert.match(transport.requests[0]?.url ?? '', /minAccessRole=writer/u);
   assert.deepEqual(JSON.parse(transport.requests[1]?.body ?? '{}'), {
     summary: 'Neuro Roadmap',
-    description: 'One-way calendar projection managed by Obsidian Neuro Roadmap.',
+    description: 'One-way calendar projection managed by Neuro Roadmap.',
   });
 });
 
@@ -2571,7 +2590,7 @@ function createCalendarEvent(
     sourceNodeId: internalItemId,
     semanticType: 'milestone',
     title: internalItemId,
-    description: 'Managed by Obsidian Neuro Roadmap',
+    description: 'Managed by Neuro Roadmap',
     startDate: '2026-10-10',
     endDateExclusive: '2026-10-11',
     allDay: true,

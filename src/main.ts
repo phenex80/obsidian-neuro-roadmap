@@ -64,6 +64,7 @@ import { registerRoadmapCodeblockProcessor } from './ui/processors/CodeblockProc
 import { calendarCommitmentDate, isCalendarEligible } from './core/CalendarCore';
 import { TaskMetadataEditorIntegration } from './ui/editor/TaskMetadataEditorExtension';
 import { InlineFileMutationQueue } from './core/InlineFileMutationQueue';
+import { openSupportLink } from './core/SupportLinks';
 
 const DEFAULT_SETTINGS: RoadmapSettings = roadmapSettingsSchema.parse({});
 const PROPERTY_LABELS: Readonly<Record<CanonicalPropertyField, string>> = {
@@ -194,7 +195,7 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
     });
     this.addCommand({
       id: 'open-neuro-adaptive-roadmap',
-      name: 'Open Neuro Roadmap',
+      name: 'Open roadmap',
       callback: () => {
         void this.activateRoadmapView();
       },
@@ -678,7 +679,7 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
     this.unsubscribeCalendarSyncStatus = null;
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl('h2', { text: 'Neuro Roadmap settings' });
+    new Setting(containerEl).setHeading().setName('Neuro Roadmap settings');
 
     new Setting(containerEl)
       .setName('Enable color coding')
@@ -692,7 +693,7 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
           }),
       );
 
-    containerEl.createEl('h3', { text: 'Property mapping' });
+    new Setting(containerEl).setHeading().setName('Property mapping');
     containerEl.createEl('p', {
       text: 'Comma-separated YAML keys accepted for each canonical meaning. Existing Markdown keys are preserved when the plugin writes updates.',
       cls: 'setting-item-description',
@@ -735,7 +736,7 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
         }),
       );
 
-    containerEl.createEl('h3', { text: 'Hard exclusions' });
+    new Setting(containerEl).setHeading().setName('Hard exclusions');
     new Setting(containerEl)
       .setName('Excluded template values')
       .setDesc('Values of the mapped Type property that identify real templates. “roadmapa” is always treated as a valid roadmap note.')
@@ -762,7 +763,7 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
           }),
       );
 
-    containerEl.createEl('h3', { text: 'Roadmap source scope' });
+    new Setting(containerEl).setHeading().setName('Roadmap source scope');
     containerEl.createEl('p', {
       text: 'Choose which remaining Markdown documents Neuro Roadmap indexes for tasks and roadmap data.',
       cls: 'setting-item-description',
@@ -789,10 +790,10 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
       this.addSourceScopeRules(containerEl);
     }
 
-    containerEl.createEl('h3', { text: 'Value mapping' });
+    new Setting(containerEl).setHeading().setName('Value mapping');
     this.addValueMappingSettings(containerEl, this.plugin.settings.valueMappings);
 
-    containerEl.createEl('h3', { text: 'Planning defaults' });
+    new Setting(containerEl).setHeading().setName('Planning defaults');
     new Setting(containerEl)
       .setName('Default duration buffer')
       .setDesc('Multiplier applied to scheduled task durations.')
@@ -864,7 +865,7 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
       },
     );
 
-    containerEl.createEl('h3', { text: 'Automatically add to calendar' });
+    new Setting(containerEl).setHeading().setName('Automatically add to calendar');
     containerEl.createEl('p', {
       text: 'Calendar is a one-way projection of meaningful roadmap dates. Markdown remains the source of truth. Hard academic dates are included by default; regular tasks are opt-in.',
       cls: 'setting-item-description',
@@ -932,8 +933,33 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
 
     this.addGoogleCalendarSettings(containerEl);
 
-    containerEl.createEl('h3', { text: 'Colors' });
+    new Setting(containerEl).setHeading().setName('Colors');
     this.addColorSettings(containerEl, this.plugin.settings.colors);
+
+    new Setting(containerEl).setHeading().setName('About & support');
+    containerEl.createEl('p', {
+      text: 'Neuro Roadmap is free to use. If it helps you and you would like to support its continued development, you can leave a voluntary contribution.',
+      cls: 'setting-item-description',
+    });
+    new Setting(containerEl)
+      .setName('Voluntary contribution')
+      .setDesc('Contributions are voluntary and do not unlock additional features.')
+      .addButton((button) =>
+        button
+          .setButtonText('Support via Revolut')
+          .setIcon('heart')
+          .onClick(() => {
+            openSupportLink('revolut', button.buttonEl.win.open.bind(button.buttonEl.win));
+          }),
+      )
+      .addButton((button) =>
+        button
+          .setButtonText('Support on Ko-fi')
+          .setIcon('heart')
+          .onClick(() => {
+            openSupportLink('kofi', button.buttonEl.win.open.bind(button.buttonEl.win));
+          }),
+      );
   }
 
   private addValueMappingSettings(containerEl: HTMLElement, mappings: SemanticValueMappings): void {
@@ -1089,7 +1115,7 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
   }
 
   private addGoogleCalendarSettings(containerEl: HTMLElement): void {
-    containerEl.createEl('h3', { text: 'Google Calendar' });
+    new Setting(containerEl).setHeading().setName('Google Calendar');
     containerEl.createEl('p', {
       text: Platform.isDesktopApp
         ? 'One-way sync only: Markdown owns managed events. Google Calendar edits are never written back to the vault.'

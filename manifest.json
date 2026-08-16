@@ -1,9 +1,14 @@
 {
-  "id": "obsidian-neuro-roadmap",
-  "name": "Neuro-Adaptive Roadmap",
+  "id": "neuro-roadmap",
+  "name": "Neuro Roadmap",
   "version": "0.1.0",
   "minAppVersion": "1.11.4",
-  "description": "Interactive neuro-adaptive roadmap planning backed by Markdown notes.",
-  "author": "Matteo",
+  "description": "Markdown-backed academic planning with Dashboard, Gantt, Horizon, and calendar export.",
+  "author": "Matteo Rossi",
+  "authorUrl": "https://github.com/phenex80",
+  "fundingUrl": {
+    "Revolut": "https://checkout.revolut.com/pay/ae52e66f-c30d-46fc-b7f0-7df89097b3e0",
+    "Ko-fi": "https://ko-fi.com/J6C5255736"
+  },
   "isDesktopOnly": false
 }

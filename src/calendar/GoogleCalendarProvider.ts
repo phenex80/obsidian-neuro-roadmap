@@ -145,7 +145,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
     }
     const response = await this.googleRequest('POST', `${GOOGLE_CALENDAR_ROOT}/calendars`, {
       summary: trimmedName,
-      description: 'One-way calendar projection managed by Obsidian Neuro Roadmap.',
+      description: 'One-way calendar projection managed by Neuro Roadmap.',
     });
     const calendar = parseCalendar(response.json);
     if (calendar === null) {

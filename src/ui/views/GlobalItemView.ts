@@ -23,7 +23,7 @@ export class GlobalItemView extends ItemView {
   }
 
   getDisplayText(): string {
-    return 'Neuro-Adaptive Roadmap';
+    return 'Neuro Roadmap';
   }
 
   getIcon(): string {
