@@ -1,4 +1,14 @@
-import { App, Modal, Notice, Platform, Plugin, PluginSettingTab, Setting, TFile } from 'obsidian';
+import {
+  App,
+  ButtonComponent,
+  Modal,
+  Notice,
+  Platform,
+  Plugin,
+  PluginSettingTab,
+  Setting,
+  TFile,
+} from 'obsidian';
 import './ui/editor/taskMetadata.css';
 import {
   CALENDAR_VERIFICATION_INTERVALS,
@@ -380,7 +390,7 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
       const result = await this.openGoogleAuthorizationModal(configuration, session, loopback);
       if (!result.authenticated) {
         this.googleAuth.discardPendingAuthorization();
-        if (result.error !== undefined) throw result.error;
+        if (result.error !== undefined) throw asError(result.error, 'Google authorization failed.');
         return false;
       }
 
@@ -458,11 +468,10 @@ export default class NeuroAdaptiveRoadmapPlugin extends Plugin {
 
   async createGoogleCalendar(name = 'Neuro Roadmap'): Promise<boolean> {
     try {
-      const createCalendar = this.googleProvider.createCalendar;
-      if (createCalendar === undefined) {
+      if (this.googleProvider.createCalendar === undefined) {
         throw new Error('Google Calendar creation is unavailable.');
       }
-      const calendar = await createCalendar.call(this.googleProvider, name);
+      const calendar = await this.googleProvider.createCalendar(name);
       this.googleCalendars = [
         ...this.googleCalendars.filter((candidate) => candidate.id !== calendar.id),
         calendar,
@@ -901,17 +910,21 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
         ? 'No manual item overrides. Items follow the automatic inclusion policy.'
         : `${overrideCount} manual override${overrideCount === 1 ? '' : 's'} currently replace the automatic policy.`)
       .addButton((button) =>
-        button
-          .setButtonText('Reset calendar item overrides')
-          .setWarning()
-          .setDisabled(overrideCount === 0)
-          .onClick(async () => {
-            if (!window.confirm('Remove all manual calendar item overrides and return to automatic inclusion?')) {
-              return;
-            }
-            await this.plugin.resetCalendarItemOverrides();
-            this.display();
-          }),
+        {
+          button.setButtonText('Reset calendar item overrides');
+          setDestructiveButton(button);
+          button.setDisabled(overrideCount === 0).onClick(() => {
+            new ConfirmationModal(this.app, {
+              title: 'Reset calendar item overrides',
+              message: 'Remove all manual calendar item overrides and return to automatic inclusion?',
+              confirmLabel: 'Reset overrides',
+              onConfirm: async () => {
+                await this.plugin.resetCalendarItemOverrides();
+                this.display();
+              },
+            }).open();
+          });
+        },
       );
 
     new Setting(containerEl)
@@ -1172,10 +1185,14 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
             }),
         )
         .addButton((button) =>
-          button.setButtonText('Disconnect').setWarning().onClick(async () => {
+          {
+            button.setButtonText('Disconnect');
+            setDestructiveButton(button);
+            button.onClick(async () => {
             await this.plugin.disconnectGoogle();
             this.display();
-          }),
+            });
+          },
         );
     } else {
       connection.addButton((button) =>
@@ -1449,6 +1466,61 @@ class PropertyMappingSuggestionModal extends Modal {
   }
 }
 
+interface ConfirmationModalOptions {
+  readonly title: string;
+  readonly message: string;
+  readonly confirmLabel: string;
+  readonly onConfirm: () => Promise<void>;
+}
+
+/** Minimal Obsidian-native confirmation for irreversible settings actions. */
+class ConfirmationModal extends Modal {
+  private submitting = false;
+
+  constructor(
+    app: App,
+    private readonly options: ConfirmationModalOptions,
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    this.setTitle(this.options.title);
+    this.contentEl.createEl('p', { text: this.options.message });
+    new Setting(this.contentEl)
+      .addButton((button) => button.setButtonText('Cancel').onClick(() => this.close()))
+      .addButton((button) => {
+        button.setButtonText(this.options.confirmLabel).setCta();
+        setDestructiveButton(button);
+        button.onClick(async () => {
+          if (this.submitting) return;
+          this.submitting = true;
+          button.setDisabled(true);
+          try {
+            await this.options.onConfirm();
+            this.close();
+          } catch {
+            this.submitting = false;
+            button.setDisabled(false);
+            new Notice('Could not apply this change. Your existing settings were preserved.');
+          }
+        });
+      });
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
+/** Uses the modern semantic style when present, with an Obsidian 1.11–1.12 fallback. */
+function setDestructiveButton(button: ButtonComponent): ButtonComponent {
+  const modernButton: { setDestructive?: () => ButtonComponent } = button;
+  return typeof modernButton.setDestructive === 'function'
+    ? modernButton.setDestructive()
+    : button.setWarning();
+}
+
 function appendMappingKey(existing: string, key: string): string {
   const values = parseCommaSeparatedValues(existing);
   if (!values.some((value) => normalizePropertyKey(value) === normalizePropertyKey(key))) {
@@ -1513,6 +1585,10 @@ function safeGoogleErrorMessage(error: unknown): string {
     .replace(/Bearer\s+\S+/giu, 'Bearer [redacted]')
     .replace(/(?:1\/\/|ya29\.)[A-Za-z0-9._-]+/gu, '[token redacted]')
     .replace(/[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}/gu, '[token redacted]');
+}
+
+function asError(value: unknown, fallbackMessage: string): Error {
+  return value instanceof Error ? value : new Error(fallbackMessage);
 }
 
 function isAuthenticationErrorMessage(value: string): boolean {

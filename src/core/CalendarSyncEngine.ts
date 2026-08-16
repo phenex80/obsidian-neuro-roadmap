@@ -107,11 +107,10 @@ export class CalendarSyncEngine {
       }
 
       if (mode === 'verify-existence') {
-        const eventExists = this.provider.eventExists;
-        if (eventExists === undefined) {
+        if (this.provider.eventExists === undefined) {
           throw new Error(`${this.provider.displayName} cannot verify managed calendar events.`);
         }
-        if (!await eventExists.call(this.provider, reference)) {
+        if (!await this.provider.eventExists(reference)) {
           await this.createAndStore(context.calendarId, event, hash);
           recreated += 1;
           continue;

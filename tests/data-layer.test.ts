@@ -1213,14 +1213,14 @@ test('calendar sync startup and periodic verification use safe modes and dispose
 });
 
 test('calendar sync default timer cleanup succeeds on first dispose and remains idempotent', () => {
-  const originalClearTimeout = globalThis.clearTimeout;
-  let usedGlobalReceiver = false;
-  globalThis.clearTimeout = function receiverSensitiveClearTimeout(
-    this: typeof globalThis,
+  const originalClearTimeout = window.activeWindow.clearTimeout;
+  let usedActiveWindowReceiver = false;
+  window.activeWindow.clearTimeout = function receiverSensitiveClearTimeout(
+    this: typeof window.activeWindow,
     handle: Parameters<typeof clearTimeout>[0],
   ): void {
-    if (this !== globalThis) throw new TypeError('Illegal invocation');
-    usedGlobalReceiver = true;
+    if (this !== window.activeWindow) throw new TypeError('Illegal invocation');
+    usedActiveWindowReceiver = true;
     originalClearTimeout(handle);
   } as typeof clearTimeout;
 
@@ -1231,9 +1231,9 @@ test('calendar sync default timer cleanup succeeds on first dispose and remains 
     controller.configureVerification(() => [], 15);
     assert.doesNotThrow(() => controller.dispose());
     assert.doesNotThrow(() => controller.dispose());
-    assert.equal(usedGlobalReceiver, true);
+    assert.equal(usedActiveWindowReceiver, true);
   } finally {
-    globalThis.clearTimeout = originalClearTimeout;
+    window.activeWindow.clearTimeout = originalClearTimeout;
   }
 });
 

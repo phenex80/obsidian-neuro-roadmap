@@ -52,8 +52,7 @@ export interface GoogleLoopbackRuntime {
 }
 
 function loadDesktopHttpModule(): LoopbackHttpModule {
-  const desktopRequire: (moduleId: string) => unknown = require;
-  const httpModule = desktopRequire('http');
+  const httpModule: unknown = require('http');
   if (!isLoopbackHttpModule(httpModule)) {
     throw new Error('Google OAuth callback server could not load Node HTTP on desktop.');
   }
@@ -74,14 +73,15 @@ const DEFAULT_RUNTIME: GoogleLoopbackRuntime = {
 
 /** One-shot localhost receiver for the official desktop installed-app OAuth flow. */
 export async function startGoogleLoopbackServer(
+  this: void,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   runtime: GoogleLoopbackRuntime = DEFAULT_RUNTIME,
 ): Promise<GoogleLoopbackSession> {
   if (!runtime.isDesktopApp) {
     throw new Error('Google Calendar connection is available only on desktop.');
   }
-  const { createServer } = runtime.loadHttpModule();
-  let timeout: ReturnType<typeof globalThis.setTimeout> | undefined;
+  const httpModule = runtime.loadHttpModule();
+  let timeout: ReturnType<typeof window.activeWindow.setTimeout> | undefined;
   let settled = false;
   let resolveResponse: (value: GoogleAuthorizationResponse) => void = () => undefined;
   let rejectResponse: (reason: unknown) => void = () => undefined;
@@ -90,7 +90,7 @@ export async function startGoogleLoopbackServer(
     resolveResponse = resolve;
     rejectResponse = reject;
   });
-  let server: LoopbackServer | null = createServer((request, reply) => {
+  let server: LoopbackServer | null = httpModule.createServer((request, reply) => {
     const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
     if (requestUrl.pathname !== CALLBACK_PATH) {
       reply.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -150,12 +150,12 @@ export async function startGoogleLoopbackServer(
       settled = true;
       rejectResponse(new Error('Google authorization was cancelled.'));
     }
-    if (timeout !== undefined) globalThis.clearTimeout(timeout);
+    if (timeout !== undefined) window.activeWindow.clearTimeout(timeout);
     timeout = undefined;
     server?.close();
     server = null;
   };
-  timeout = globalThis.setTimeout(() => {
+  timeout = window.activeWindow.setTimeout(() => {
     if (!settled) {
       settled = true;
       rejectResponse(new Error('Google authorization timed out. Start Connect again.'));

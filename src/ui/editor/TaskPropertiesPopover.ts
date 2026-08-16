@@ -64,23 +64,20 @@ export class TaskPropertiesPopover {
     private readonly actions: TaskPropertiesPopoverActions,
   ) {
     this.document = anchor.ownerDocument;
-    this.element = this.document.createElement('div');
-    this.element.className = 'nr-task-properties-popover';
+    this.element = this.document.body.createDiv({ cls: 'nr-task-properties-popover' });
+    this.element.detach();
     this.element.setAttribute('role', 'dialog');
     this.element.setAttribute('aria-modal', 'false');
     const headingId = `nr-task-properties-${++popoverSequence}`;
     this.element.setAttribute('aria-labelledby', headingId);
 
-    const heading = this.document.createElement('div');
-    heading.className = 'nr-task-properties-heading';
-    const title = this.document.createElement('strong');
+    const heading = this.element.createDiv({ cls: 'nr-task-properties-heading' });
+    const title = heading.createEl('strong');
     title.id = headingId;
     title.textContent = 'Task properties';
-    heading.append(title, this.createCloseButton());
-    this.element.append(heading);
+    this.createCloseButton(heading);
 
-    const form = this.document.createElement('div');
-    form.className = 'nr-task-properties-form';
+    const form = this.element.createDiv({ cls: 'nr-task-properties-form' });
     form.append(
       this.createTypeControl(),
       this.createDateControl('Start', 'startDate', node.startDate),
@@ -89,7 +86,6 @@ export class TaskPropertiesPopover {
       this.createStatusControl(),
       this.createCalendarControl(),
     );
-    this.element.append(form);
   }
 
   open(): void {
@@ -112,10 +108,9 @@ export class TaskPropertiesPopover {
     this.element.remove();
   }
 
-  private createCloseButton(): HTMLButtonElement {
-    const button = this.document.createElement('button');
+  private createCloseButton(parent: HTMLElement): HTMLButtonElement {
+    const button = parent.createEl('button', { cls: 'nr-task-icon-button' });
     button.type = 'button';
-    button.className = 'nr-task-icon-button';
     button.title = 'Close task properties';
     button.setAttribute('aria-label', 'Close task properties');
     setIcon(button, 'x');
@@ -140,7 +135,8 @@ export class TaskPropertiesPopover {
     field: 'startDate' | 'dueDate',
     value: string | undefined,
   ): HTMLLabelElement {
-    const input = this.document.createElement('input');
+    const input = this.element.createEl('input');
+    input.detach();
     input.type = 'date';
     input.value = value ?? '';
     input.setAttribute('aria-label', `${label} date`);
@@ -172,25 +168,21 @@ export class TaskPropertiesPopover {
 
   private createCalendarControl(): HTMLDivElement {
     const state = this.actions.calendarState(this.node);
-    const row = this.document.createElement('div');
-    row.className = 'nr-task-property-field';
-    const label = this.document.createElement('span');
-    label.className = 'nr-task-property-label';
+    const row = this.element.createDiv({ cls: 'nr-task-property-field' });
+    row.detach();
+    const label = row.createSpan({ cls: 'nr-task-property-label' });
     label.textContent = 'Calendar';
-    const value = this.document.createElement('div');
-    value.className = 'nr-task-calendar-field';
-    const stateText = this.document.createElement('span');
+    const value = row.createDiv({ cls: 'nr-task-calendar-field' });
+    const stateText = value.createSpan();
     stateText.textContent = calendarActionStateLabel(state.included, state.override, state.available);
-    value.append(stateText, this.createCalendarButton(state));
-    row.append(label, value);
+    this.createCalendarButton(value, state);
     return row;
   }
 
-  private createCalendarButton(state: TaskCalendarControlState): HTMLButtonElement {
+  private createCalendarButton(parent: HTMLElement, state: TaskCalendarControlState): HTMLButtonElement {
     const presentation = describeCalendarAction(state.included, state.override, state.available);
-    const button = this.document.createElement('button');
+    const button = parent.createEl('button', { cls: 'nr-task-icon-button nr-task-calendar-button' });
     button.type = 'button';
-    button.className = 'nr-task-icon-button nr-task-calendar-button';
     button.classList.toggle('is-included', state.included);
     button.classList.toggle('is-manual', presentation.manual);
     button.title = presentation.actionLabel;
@@ -209,24 +201,23 @@ export class TaskPropertiesPopover {
     selected: T,
     label: (value: T) => string,
   ): HTMLSelectElement {
-    const select = this.document.createElement('select');
+    const select = this.element.createEl('select');
+    select.detach();
     for (const value of values) {
-      const option = this.document.createElement('option');
+      const option = select.createEl('option');
       option.value = value;
       option.textContent = label(value);
       option.selected = value === selected;
-      select.append(option);
     }
     return select;
   }
 
   private createField(labelText: string, control: HTMLElement): HTMLLabelElement {
-    const label = this.document.createElement('label');
-    label.className = 'nr-task-property-field';
-    const text = this.document.createElement('span');
-    text.className = 'nr-task-property-label';
+    const label = this.element.createEl('label', { cls: 'nr-task-property-field' });
+    label.detach();
+    const text = label.createSpan({ cls: 'nr-task-property-label' });
     text.textContent = labelText;
-    label.append(text, control);
+    label.append(control);
     return label;
   }
 
@@ -242,11 +233,9 @@ export class TaskPropertiesPopover {
   }
 
   private showError(message: string): void {
-    const error = this.document.createElement('p');
-    error.className = 'nr-task-properties-error';
+    const error = this.element.createEl('p', { cls: 'nr-task-properties-error' });
     error.setAttribute('role', 'alert');
     error.textContent = message;
-    this.element.append(error);
   }
 
   private clearError(): void {

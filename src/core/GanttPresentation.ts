@@ -1,4 +1,4 @@
-import type { NodeStatus, Priority } from '../types';
+import type { NodeStatus } from '../types';
 
 export interface GanttPriorityMarker {
   readonly symbol: string;
@@ -11,7 +11,7 @@ export interface GanttBarPresentation {
   readonly priorityMarker: GanttPriorityMarker | null;
 }
 
-export function ganttPriorityMarker(priority: Priority | string): GanttPriorityMarker | null {
+export function ganttPriorityMarker(priority: string): GanttPriorityMarker | null {
   const normalized = priority.trim().toLocaleLowerCase();
   if (normalized === 'highest') {
     return { symbol: '▲', label: 'Highest priority', tone: 'high' };
@@ -27,7 +27,7 @@ export function ganttPriorityMarker(priority: Priority | string): GanttPriorityM
 
 export function ganttBarPresentation(
   status: NodeStatus,
-  priority: Priority | string,
+  priority: string,
 ): GanttBarPresentation {
   return {
     statusClass: `status-${status}`,

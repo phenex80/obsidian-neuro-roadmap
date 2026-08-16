@@ -16,6 +16,8 @@ const obsidianTestStub = {
       contents: `
         import { StateField } from '@codemirror/state';
         export const Platform = { isDesktopApp: true, isMobile: false };
+        globalThis.window = globalThis;
+        globalThis.window.activeWindow = globalThis;
         export const editorInfoField = StateField.define({
           create: () => ({ file: { path: 'note.md' } }),
           update: (value) => value,
