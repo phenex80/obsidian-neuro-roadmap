@@ -739,10 +739,10 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
     new Setting(containerEl).setHeading().setName('Hard exclusions');
     new Setting(containerEl)
       .setName('Excluded template values')
-      .setDesc('Values of the mapped Type property that identify real templates. “roadmapa” is always treated as a valid roadmap note.')
+      .setDesc('Values of the mapped Type property that identify real templates. Roadmap notes remain valid and are not excluded by this setting.')
       .addText((text) =>
         text
-          .setPlaceholder('template, šablóna, sablona')
+          .setPlaceholder('template, blueprint')
           .setValue(this.plugin.settings.excludedTemplateValues)
           .onChange(async (value) => {
             this.plugin.settings.excludedTemplateValues = value;
@@ -755,7 +755,7 @@ class NeuroAdaptiveRoadmapSettingTab extends PluginSettingTab {
       .setDesc('Hard exclusion: files under these vault paths are never indexed, even when they match source scope rules.')
       .addTextArea((text) =>
         text
-          .setPlaceholder('40 Systém/Šablóny')
+          .setPlaceholder('Templates/')
           .setValue(this.plugin.settings.excludedPathPrefixes)
           .onChange(async (value) => {
             this.plugin.settings.excludedPathPrefixes = value;

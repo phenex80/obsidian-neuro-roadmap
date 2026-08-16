@@ -19,7 +19,7 @@ Keep your notes, tasks, dates, and plans in normal Markdown while gaining a shar
 ## Quick start
 
 1. Enable Neuro Roadmap, then open it from the ribbon or command palette.
-2. Add a subject property to a note, for example `predmet: ISKB02` or `course: ISKB02`.
+2. Add a subject property to a note, for example `subject: ISKB02` or `course: ISKB02`.
 3. Add a normal Markdown task: `- [ ] Prepare reading [due:: 2026-09-14]`.
 4. Use Dashboard for the overview, Gantt for time, and Horizon for the next action.
 

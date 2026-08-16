@@ -5,7 +5,11 @@ import { createServer } from 'node:http';
 import test from 'node:test';
 import { editorInfoField, editorLivePreviewField } from 'obsidian';
 import type { App, CachedMetadata, MetadataCache, TFile } from 'obsidian';
-import { RoadmapParser, createDefaultParserOptions, isCompletedTaskMarker } from '../src/core/Parser';
+import {
+  RoadmapParser,
+  createDefaultParserOptions as createEnglishDefaultParserOptions,
+  isCompletedTaskMarker,
+} from '../src/core/Parser';
 import {
   compilePropertyKeyMap,
   compileSemanticValueMap,
@@ -126,12 +130,76 @@ const metadataCache = {
   getFirstLinkpathDest: () => null,
 } as unknown as MetadataCache;
 
+/** Explicit multilingual fixture used by legacy-vault compatibility tests. */
+function createDefaultParserOptions() {
+  const propertyMappings = propertyMappingSchema.parse({
+    title: 'title, názov, name',
+    subject: 'predmet, subject, course, module',
+    semester: 'semester, obdobie, term',
+    project: 'project, projekt, workstream, work_stream',
+    type: 'type, typ, kind, category',
+    calendarType: 'calendar_type, calendarType, event_type, eventType, udalosť, udalost',
+    status: 'status, stav',
+    priority: 'priority, priorita',
+    startDate: 'start_date, start, startDate, začiatok, zaciatok',
+    dueDate: 'due_date, due, dueDate, deadline, termín, termin, odovzdanie',
+    milestone: 'milestone, míľnik, milnik',
+    parent: 'parent, rodič, rodic',
+    dependsOn: 'depends_on, dependsOn, závisí_od, zavisi_od',
+    hardDependency: 'hard_dependency, hardDeadline, fixed_date, pevný_termín, pevny_termin',
+  });
+  const valueMappings = semanticValueMappingSchema.parse({
+    statusTodo: 'todo, to-do, open, pending, plánované, planovane',
+    statusInProgress: 'in-progress, in progress, active, aktívny, aktivny, prebieha, working, started',
+    statusDone: 'done, completed, complete, hotový, hotovy, hotové, hotove, ukončený, ukonceny, finished, closed',
+    statusUnscheduled: 'unscheduled, inbox, backlog, neplánované, neplanovane',
+    priorityHigh: 'high, highest, urgent, vysoká, vysoka, kritická, kriticka',
+    priorityMedium: 'medium, normal, stredná, stredna',
+    priorityLow: 'low, lowest, nízka, nizka, someday',
+    typeRoadmap: 'roadmap, roadmapa',
+    typeProject: 'project, projekt, workstream',
+    typeMilestone: 'milestone, míľnik, milnik',
+    typeTask: 'task, úloha, uloha',
+    calendarExam: 'exam, skúška, skuska, test',
+    calendarAssignmentDeadline: 'assignment deadline, assignment, zadanie, odovzdanie zadania',
+    calendarProjectDeadline: 'project deadline, project due, projektový termín, projektovy termin',
+    calendarMilestone: 'milestone, míľnik, milnik',
+    calendarPresentation: 'presentation, prezentácia, prezentacia',
+    calendarRegularTask: 'regular task, task, úloha, uloha',
+  });
+  return {
+    ...createEnglishDefaultParserOptions(),
+    propertyKeys: compilePropertyKeyMap(propertyMappings),
+    semanticValues: compileSemanticValueMap(valueMappings),
+    excludedTemplateValues: ['template', 'šablóna', 'sablona'],
+  };
+}
+
 test('semantic property aliases adapt Slovak and English vault conventions', () => {
-  const keys = compilePropertyKeyMap(propertyMappingSchema.parse({}));
-  assert.equal(readMappedValue({ predmet: 'ISKB02' }, keys.subject)?.value, 'ISKB02');
-  assert.equal(readMappedValue({ course: 'ISKB02' }, keys.subject)?.value, 'ISKB02');
-  assert.equal(readMappedValue({ deadline: '2026-10-10' }, keys.dueDate)?.value, '2026-10-10');
-  assert.equal(readMappedValue({ due: '2026-10-11' }, keys.dueDate)?.value, '2026-10-11');
+  const defaults = compilePropertyKeyMap(propertyMappingSchema.parse({}));
+  assert.equal(readMappedValue({ subject: 'ISKB02' }, defaults.subject)?.value, 'ISKB02');
+  assert.equal(readMappedValue({ course: 'ISKB02' }, defaults.subject)?.value, 'ISKB02');
+  assert.equal(readMappedValue({ predmet: 'ISKB02' }, defaults.subject), undefined);
+  assert.equal(readMappedValue({ deadline: '2026-10-10' }, defaults.dueDate)?.value, '2026-10-10');
+  assert.equal(readMappedValue({ due: '2026-10-11' }, defaults.dueDate)?.value, '2026-10-11');
+
+  const localized = compilePropertyKeyMap(propertyMappingSchema.parse({
+    subject: 'predmet, subject',
+  }));
+  assert.equal(readMappedValue({ predmet: 'ISKB02' }, localized.subject)?.value, 'ISKB02');
+});
+
+test('new-install semantic defaults are English-only while localized mappings remain opt-in', () => {
+  const defaults = roadmapSettingsSchema.parse({});
+  const defaultMappings = JSON.stringify({
+    propertyMappings: defaults.propertyMappings,
+    valueMappings: defaults.valueMappings,
+    excludedTemplateValues: defaults.excludedTemplateValues,
+  });
+  assert.doesNotMatch(defaultMappings, /[áäčďéěíĺľňóôŕřšťúůýž]/iu);
+  assert.equal(defaults.excludedTemplateValues, 'template');
+  assert.equal(defaults.propertyMappings.subject, 'subject, course, module');
+  assert.equal(defaults.valueMappings.typeRoadmap, 'roadmap');
 });
 
 test('support links use fixed destinations and open only through an explicit action', () => {
@@ -153,14 +221,26 @@ test('support links use fixed destinations and open only through an explicit act
 });
 
 test('semantic status and priority values normalize aliases and diacritics', () => {
-  const values = compileSemanticValueMap(semanticValueMappingSchema.parse({}));
-  assert.equal(mapStatus('hotové', values), 'done');
-  assert.equal(mapStatus('AKTÍVNY', values), 'in-progress');
-  assert.equal(mapPriority('vysoká', values), 'high');
-  assert.equal(mapPriority('highest', values), 'high');
-  assert.equal(mapPriority('lowest', values), 'low');
-  assert.equal(mapCalendarSemanticType('skúška', values), 'exam');
-  assert.equal(mapCalendarSemanticType('prezentácia', values), 'presentation');
+  const defaults = compileSemanticValueMap(semanticValueMappingSchema.parse({}));
+  assert.equal(mapStatus('done', defaults), 'done');
+  assert.equal(mapStatus('AKTIVE', defaults), undefined);
+  assert.equal(mapPriority('high', defaults), 'high');
+  assert.equal(mapPriority('highest', defaults), 'high');
+  assert.equal(mapPriority('lowest', defaults), 'low');
+  assert.equal(mapCalendarSemanticType('exam', defaults), 'exam');
+
+  const localized = compileSemanticValueMap(semanticValueMappingSchema.parse({
+    statusDone: 'done, hotové',
+    statusInProgress: 'in-progress, aktívny',
+    priorityHigh: 'high, vysoká',
+    calendarExam: 'exam, skúška',
+    calendarPresentation: 'presentation, prezentácia',
+  }));
+  assert.equal(mapStatus('hotové', localized), 'done');
+  assert.equal(mapStatus('AKTÍVNY', localized), 'in-progress');
+  assert.equal(mapPriority('vysoká', localized), 'high');
+  assert.equal(mapCalendarSemanticType('skúška', localized), 'exam');
+  assert.equal(mapCalendarSemanticType('prezentácia', localized), 'presentation');
 });
 
 test('calendar policy includes meaningful dates and excludes regular tasks by default', () => {
@@ -2238,7 +2318,7 @@ test('compact metadata uses semantic labels and suppresses neutral or redundant 
 });
 
 test('compact token scoping ignores unknown metadata and ordinary block IDs', () => {
-  const keys = compilePropertyKeyMap(propertyMappingSchema.parse({}));
+  const keys = compilePropertyKeyMap(propertyMappingSchema.parse({ type: 'type, typ' }));
   const line = '- [ ] Úloha [start:: 2026-08-20] [foo:: zachovať] [typ:: skúška] ^nr-cal-abc';
   const tokens = findCompactTaskPropertyTokens(line, keys);
   assert.deepEqual(tokens.map(({ field, key }) => ({ field, key })), [

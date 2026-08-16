@@ -16,9 +16,11 @@ Drag scheduled tasks to reschedule at day precision. The source Markdown is upda
 
 Horizon answers what to work on now:
 
-- **Now**: incomplete overdue work, work due today, in-progress work, and critical-horizon tasks.
-- **Next**: dated upcoming work within the configured window.
-- **Later**: dated work outside that window.
-- **Unscheduled**: tasks with no usable start or due date.
+- **Now**: incomplete in-progress tasks (regardless of date), incomplete tasks whose start date is today or earlier, tasks due today, and tasks with a due date inside the configured critical horizon. With the default critical horizon of `0`, that last rule is also today-only.
+- **Next**: remaining scheduled tasks whose effective date is after today and no later than the configured Next window (7 days by default).
+- **Later**: remaining scheduled tasks beyond the Next window.
+- **Unscheduled**: actionable tasks with neither a usable due date nor a usable start date.
 
-Overdue work does not silently receive a new deadline. When there are many overdue tasks, the view presents a deterministic preview and a way to show all.
+Completed tasks are excluded from all active Horizon buckets. Overdue means a usable due date before today and an incomplete task; these items are shown in the Now column's separate overdue group, with a five-item preview by default and **Show all** for the remainder. In-progress tasks are prioritized into normal Now before the overdue split. For dated tasks, due date is preferred over start date as the effective date; a start date on or before today still promotes a task to Now. Bucket sorting is deterministic: urgency date first, then priority (High, Medium, Low), title, and stable ID; unscheduled tasks use priority, title, and stable ID.
+
+Overdue work does not silently receive a new deadline. Horizon windows are inclusive at their stated end boundaries, and all values can be adjusted in Settings.

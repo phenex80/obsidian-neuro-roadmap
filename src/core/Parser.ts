@@ -50,7 +50,7 @@ export function createDefaultParserOptions(): RoadmapParserOptions {
   return {
     propertyKeys: compilePropertyKeyMap(propertyMappingSchema.parse({})),
     semanticValues: compileSemanticValueMap(semanticValueMappingSchema.parse({})),
-    excludedTemplateValues: ['template', 'šablóna', 'sablona'],
+    excludedTemplateValues: ['template'],
     excludedPathPrefixes: [],
     sourceScope: compileSourceScope('all', []),
     defaultDurationBuffer: 1.3,

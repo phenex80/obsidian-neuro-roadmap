@@ -89,51 +89,45 @@ export const inlineTaskSchema = z.object({
 });
 
 export const propertyMappingSchema = z.object({
-  title: z.string().default('title, názov, nazov, name'),
-  subject: z.string().default('predmet, subject, course, module'),
-  semester: z.string().default('semester, obdobie, term'),
-  project: z.string().default('project, projekt, workstream, work_stream'),
-  type: z.string().default('type, typ, kind, category'),
-  calendarType: z
-    .string()
-    .default('calendar_type, calendarType, event_type, eventType, udalosť, udalost'),
-  status: z.string().default('status, stav'),
-  priority: z.string().default('priority, priorita'),
-  startDate: z.string().default('start_date, start, startDate, začiatok, zaciatok'),
-  dueDate: z.string().default('due_date, due, dueDate, deadline, termín, termin, odovzdanie'),
-  milestone: z.string().default('milestone, míľnik, milnik'),
+  title: z.string().default('title, name'),
+  subject: z.string().default('subject, course, module'),
+  semester: z.string().default('semester, term, period'),
+  project: z.string().default('project, workstream, work_stream'),
+  type: z.string().default('type, kind, category'),
+  calendarType: z.string().default('calendar_type, calendarType, event_type, eventType'),
+  status: z.string().default('status'),
+  priority: z.string().default('priority'),
+  startDate: z.string().default('start_date, start, startDate'),
+  dueDate: z.string().default('due_date, due, dueDate, deadline'),
+  milestone: z.string().default('milestone'),
   durationBuffer: z.string().default('duration_buffer, buffer, durationBuffer'),
-  parent: z.string().default('parent, rodič, rodic'),
-  dependsOn: z.string().default('depends_on, dependsOn, závisí_od, zavisi_od'),
-  hardDependency: z.string().default('hard_dependency, hardDeadline, fixed_date, pevný_termín, pevny_termin'),
+  parent: z.string().default('parent'),
+  dependsOn: z.string().default('depends_on, dependsOn'),
+  hardDependency: z.string().default('hard_dependency, hardDeadline, fixed_date'),
 });
 
 export const semanticValueMappingSchema = z.object({
-  statusTodo: z.string().default('todo, to-do, open, pending, plánované, planovane'),
+  statusTodo: z.string().default('todo, to-do, open, pending'),
   statusInProgress: z
     .string()
-    .default('in-progress, in progress, active, aktívny, aktivny, prebieha, working, started'),
+    .default('in-progress, in progress, active, working, started'),
   statusDone: z
     .string()
-    .default('done, completed, complete, hotový, hotovy, hotové, hotove, ukončený, ukonceny, finished, closed'),
-  statusUnscheduled: z.string().default('unscheduled, inbox, backlog, neplánované, neplanovane'),
-  priorityHigh: z.string().default('high, highest, urgent, vysoká, vysoka, kritická, kriticka'),
-  priorityMedium: z.string().default('medium, normal, stredná, stredna'),
-  priorityLow: z.string().default('low, lowest, nízka, nizka, someday'),
-  typeRoadmap: z.string().default('roadmap, roadmapa'),
-  typeProject: z.string().default('project, projekt, workstream'),
-  typeMilestone: z.string().default('milestone, míľnik, milnik'),
-  typeTask: z.string().default('task, úloha, uloha'),
-  calendarExam: z.string().default('exam, skúška, skuska, test'),
-  calendarAssignmentDeadline: z
-    .string()
-    .default('assignment deadline, assignment, zadanie, odovzdanie zadania'),
-  calendarProjectDeadline: z
-    .string()
-    .default('project deadline, project due, projektový termín, projektovy termin'),
-  calendarMilestone: z.string().default('milestone, míľnik, milnik'),
-  calendarPresentation: z.string().default('presentation, prezentácia, prezentacia'),
-  calendarRegularTask: z.string().default('regular task, task, úloha, uloha'),
+    .default('done, completed, complete, finished, closed'),
+  statusUnscheduled: z.string().default('unscheduled, inbox, backlog'),
+  priorityHigh: z.string().default('high, highest, urgent'),
+  priorityMedium: z.string().default('medium, normal'),
+  priorityLow: z.string().default('low, lowest, someday'),
+  typeRoadmap: z.string().default('roadmap'),
+  typeProject: z.string().default('project, workstream'),
+  typeMilestone: z.string().default('milestone'),
+  typeTask: z.string().default('task'),
+  calendarExam: z.string().default('exam, test'),
+  calendarAssignmentDeadline: z.string().default('assignment deadline, assignment'),
+  calendarProjectDeadline: z.string().default('project deadline, project due'),
+  calendarMilestone: z.string().default('milestone'),
+  calendarPresentation: z.string().default('presentation'),
+  calendarRegularTask: z.string().default('regular task, task'),
 });
 
 const colorValueSchema = z.string().regex(/^#[0-9a-f]{6}$/iu);
@@ -243,7 +237,7 @@ export const roadmapSettingsSchema = z.object({
   enableColorCoding: z.boolean().default(true),
   propertyMappings: propertyMappingSchema.default({}),
   valueMappings: semanticValueMappingSchema.default({}),
-  excludedTemplateValues: z.string().default('template, šablóna, sablona'),
+  excludedTemplateValues: z.string().default('template'),
   excludedPathPrefixes: z.string().default(''),
   sourceScopeMode: z.enum(SOURCE_SCOPE_MODES).default('all'),
   sourceScopeRules: z.array(sourceScopeRuleSchema).default([]),
