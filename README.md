@@ -74,8 +74,7 @@ Feedback, bug reports, suggestions, and financial support are very welcome. The 
 
 Voluntary contributions do not unlock features or change plugin behavior.
 
-- [Support via Revolut](https://checkout.revolut.com/pay/ae52e66f-c30d-46fc-b7f0-7df89097b3e0)
-- [Support on Ko-fi](https://ko-fi.com/J6C5255736)
+ [![Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/J6C5255736) [![Support via Revolut](docs/assets/revolut-support-btn.svg)](https://checkout.revolut.com/pay/ae52e66f-c30d-46fc-b7f0-7df89097b3e0)
 
 ## License
 
