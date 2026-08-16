@@ -86,13 +86,24 @@ export async function updateNodeDates(
 
   if (node.source === 'frontmatter') {
     await app.fileManager.processFrontMatter(file, (frontmatter) => {
-      frontmatter[node.writeKeys.startDate] = startDate;
-      frontmatter[node.writeKeys.dueDate] = dueDate;
+      writeFrontmatterValue(frontmatter, node.writeKeys.startDate, startDate);
+      writeFrontmatterValue(frontmatter, node.writeKeys.dueDate, dueDate);
     });
     return true;
   }
 
   return updateInlineTaskDates(app, mutations, file, node, startDate, dueDate);
+}
+
+function writeFrontmatterValue(frontmatter: unknown, key: string, value: string): void {
+  if (!isMutableFrontmatter(frontmatter)) {
+    throw new Error('Could not update invalid YAML frontmatter.');
+  }
+  frontmatter[key] = value;
+}
+
+function isMutableFrontmatter(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 /** Writes several dependency updates sequentially to prevent same-file write races. */

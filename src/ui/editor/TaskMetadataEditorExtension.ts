@@ -18,7 +18,6 @@ import {
   editorLivePreviewField,
   getLanguage,
   setIcon,
-  type MarkdownFileInfo,
 } from 'obsidian';
 import type {
   CalendarItemOverride,
@@ -78,12 +77,11 @@ export class TaskMetadataEditorIntegration {
   private disposed = false;
 
   constructor(private readonly options: TaskMetadataEditorOptions) {
-    const owner = this;
     const decorations = StateField.define<DecorationSet>({
-      create(state) {
-        return owner.buildDecorations(state);
+      create: (state) => {
+        return this.buildDecorations(state);
       },
-      update(value, transaction) {
+      update: (value, transaction) => {
         const refreshed = transaction.effects.some((effect) => effect.is(refreshTaskMetadata));
         const fileChanged = editorPath(transaction.startState) !== editorPath(transaction.state);
         const livePreviewChanged = livePreviewEnabled(transaction.startState) !==
@@ -95,23 +93,16 @@ export class TaskMetadataEditorIntegration {
           fileChanged ||
           livePreviewChanged
         ) {
-          return owner.buildDecorations(transaction.state);
+          return this.buildDecorations(transaction.state);
         }
         return value;
       },
       provide: (field) => EditorView.decorations.from(field),
     });
-    const viewTracker = ViewPlugin.fromClass(
-      class {
-        constructor(readonly view: EditorView) {
-          owner.views.add(view);
-        }
-
-        destroy(): void {
-          owner.views.delete(this.view);
-        }
-      },
-    );
+    const viewTracker = ViewPlugin.define((view) => {
+      this.views.add(view);
+      return { destroy: () => this.views.delete(view) };
+    });
     this.extension = Prec.highest([decorations, viewTracker]);
   }
 
@@ -239,8 +230,8 @@ class TaskMetadataWidget extends WidgetType {
   }
 
   toDOM(view: EditorView): HTMLElement {
-    const row = view.dom.ownerDocument.createElement('div');
-    row.className = 'nr-task-metadata-row';
+    const row = view.dom.createDiv({ cls: 'nr-task-metadata-row' });
+    row.detach();
     row.classList.toggle('is-minimal', Object.keys(this.metadata).length === 0);
     row.setAttribute('role', 'group');
     row.setAttribute('aria-label', `Task metadata for ${this.node.title}`);
@@ -255,21 +246,20 @@ class TaskMetadataWidget extends WidgetType {
     appendMetadataChip(row, this.metadata.statusLabel, 'nr-task-status-chip');
 
     if (this.calendar.available || this.calendar.override !== undefined) {
-      row.append(this.createCalendarButton(view.dom.ownerDocument));
+      this.createCalendarButton(row);
     }
-    row.append(this.createPropertiesButton(view.dom.ownerDocument));
+    this.createPropertiesButton(row);
     return row;
   }
 
-  private createCalendarButton(document: Document): HTMLButtonElement {
+  private createCalendarButton(parent: HTMLElement): HTMLButtonElement {
     const presentation = describeCalendarAction(
       this.calendar.included,
       this.calendar.override,
       this.calendar.available,
     );
-    const button = document.createElement('button');
+    const button = parent.createEl('button', { cls: 'nr-task-metadata-action nr-task-calendar-action' });
     button.type = 'button';
-    button.className = 'nr-task-metadata-action nr-task-calendar-action';
     button.classList.toggle('is-included', this.calendar.included);
     button.classList.toggle('is-manual', presentation.manual);
     button.title = presentation.actionLabel;
@@ -287,17 +277,14 @@ class TaskMetadataWidget extends WidgetType {
     return button;
   }
 
-  private createPropertiesButton(document: Document): HTMLButtonElement {
-    const button = document.createElement('button');
+  private createPropertiesButton(parent: HTMLElement): HTMLButtonElement {
+    const button = parent.createEl('button', { cls: 'nr-task-metadata-action nr-task-properties-action' });
     button.type = 'button';
-    button.className = 'nr-task-metadata-action nr-task-properties-action';
     button.title = 'Task properties';
     button.setAttribute('aria-label', 'Task properties');
-    const glyph = document.createElement('span');
-    glyph.className = 'nr-task-properties-glyph';
+    const glyph = button.createSpan({ cls: 'nr-task-properties-glyph' });
     glyph.setAttribute('aria-hidden', 'true');
     glyph.textContent = 'i';
-    button.append(glyph);
     button.addEventListener('click', () => this.owner.openProperties(button, this.node));
     return button;
   }
@@ -305,10 +292,8 @@ class TaskMetadataWidget extends WidgetType {
 
 function appendMetadataChip(parent: HTMLElement, value: string | undefined, className: string): void {
   if (value === undefined) return;
-  const chip = parent.ownerDocument.createElement('span');
-  chip.className = `nr-task-metadata-chip ${className}`;
+  const chip = parent.createSpan({ cls: `nr-task-metadata-chip ${className}` });
   chip.textContent = value;
-  parent.append(chip);
 }
 
 function tokenCanBeProjected(
@@ -343,12 +328,12 @@ function selectionIntersects(state: EditorState, from: number, to: number): bool
 }
 
 function editorPath(state: EditorState): string | undefined {
-  const info = state.field(editorInfoField, false) as MarkdownFileInfo | undefined;
+  const info = state.field(editorInfoField, false);
   return info?.file?.path;
 }
 
 function livePreviewEnabled(state: EditorState): boolean {
-  return (state.field(editorLivePreviewField, false) as boolean | undefined) ?? false;
+  return state.field(editorLivePreviewField, false) ?? false;
 }
 
 function preferredPersistedValue(

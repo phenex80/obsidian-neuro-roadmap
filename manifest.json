@@ -1,7 +1,7 @@
 {
   "id": "neuro-roadmap",
   "name": "Neuro Roadmap",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "minAppVersion": "1.11.4",
   "description": "Markdown-backed academic planning with Dashboard, Gantt, Horizon, and calendar export.",
   "author": "Matteo Rossi",

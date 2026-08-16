@@ -1,6 +1,6 @@
 {
   "name": "neuro-roadmap",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Markdown-backed academic planning for Obsidian.",
   "main": "main.js",
   "author": "Matteo Rossi",

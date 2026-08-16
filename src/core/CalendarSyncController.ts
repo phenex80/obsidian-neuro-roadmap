@@ -14,7 +14,7 @@ export interface CalendarSyncRuntimeStatus {
   readonly message?: string;
 }
 
-type TimerHandle = ReturnType<typeof setTimeout>;
+type TimerHandle = ReturnType<typeof window.activeWindow.setTimeout>;
 type StatusListener = (status: CalendarSyncRuntimeStatus) => void;
 
 export interface CalendarSyncControllerOptions {
@@ -58,8 +58,8 @@ export class CalendarSyncController {
     this.onSuccess = options.onSuccess ?? (() => undefined);
     this.onError = options.onError ?? (() => undefined);
     this.scheduleTimer = options.scheduleTimer ?? ((callback, milliseconds) =>
-      globalThis.setTimeout(callback, milliseconds));
-    this.cancelTimer = options.cancelTimer ?? ((handle) => globalThis.clearTimeout(handle));
+      window.activeWindow.setTimeout(callback, milliseconds));
+    this.cancelTimer = options.cancelTimer ?? ((handle) => window.activeWindow.clearTimeout(handle));
   }
 
   subscribe(listener: StatusListener): () => void {
