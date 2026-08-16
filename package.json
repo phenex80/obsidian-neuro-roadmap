@@ -1,0 +1,40 @@
+{
+  "name": "neuro-roadmap",
+  "version": "0.1.0",
+  "description": "Markdown-backed academic planning for Obsidian.",
+  "main": "main.js",
+  "author": "Matteo Rossi",
+  "homepage": "https://github.com/phenex80/obsidian-neuro-roadmap#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phenex80/obsidian-neuro-roadmap.git"
+  },
+  "bugs": {
+    "url": "https://github.com/phenex80/obsidian-neuro-roadmap/issues"
+  },
+  "scripts": {
+    "build": "node esbuild.config.mjs production",
+    "dev": "node esbuild.config.mjs",
+    "check": "svelte-check --tsconfig ./tsconfig.json && tsc --noEmit",
+    "test": "node scripts/run-tests.mjs"
+  },
+  "keywords": [
+    "obsidian",
+    "plugin",
+    "roadmap"
+  ],
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "devDependencies": {
+    "@codemirror/state": "6.5.0",
+    "@codemirror/view": "6.38.6",
+    "@types/node": "^26.2.0",
+    "esbuild": "^0.25.10",
+    "obsidian": "1.13.1",
+    "svelte": "^5.56.9",
+    "svelte-check": "^4.7.6",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "zod": "^3.25.76"
+  }
+}

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg width="223" height="30" viewBox="0 0 223 30" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xml:space="preserve" xmlns:serif="http://www.serif.com/" style="fill-rule:evenodd;clip-rule:evenodd;">
+    <path d="M222.5,8L222.5,22C222.5,26.139 219.139,29.5 215,29.5L8,29.5C3.861,29.5 0.5,26.139 0.5,22L0.5,8C0.5,3.861 3.861,0.5 8,0.5L215,0.5C219.139,0.5 222.5,3.861 222.5,8Z" style="fill:white;stroke:rgb(217,217,217);stroke-width:1px;"/>
+    <g transform="matrix(0.033,0,0,0.033,18,1.79998)">
+        <rect x="209.051" y="262.097" width="101.445" height="410.21"/>
+        <path d="M628.623,285.554C628.623,198.511 557.741,127.694 470.612,127.694L209.051,127.694L209.051,215.297L458.176,215.297C497.606,215.297 530.269,246.275 530.99,284.348C531.351,303.412 524.196,321.404 510.844,335.008C497.487,348.618 479.64,356.117 460.593,356.117L363.547,356.117C360.101,356.117 357.297,358.917 357.297,362.362L357.297,440.221C357.297,441.545 357.706,442.811 358.476,443.877L523.131,672.307L643.661,672.307L478.623,443.253C561.736,439.08 628.623,369.248 628.623,285.554Z" style="fill-rule:nonzero;"/>
+    </g>
+    <g transform="matrix(1,0,0,1,54.0083,19.5859)">
+        <text x="0px" y="0px" style="font-family:'Helvetica-Bold', 'Helvetica';font-weight:700;font-size:13.5px;fill:rgb(32,32,32);">Support me on Revolut</text>
+    </g>
+</svg>
